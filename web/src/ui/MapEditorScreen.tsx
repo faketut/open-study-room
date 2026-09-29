@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MapObjectType } from "../types/mapConfig";
+import type { MapObjectType, ZoneKind } from "../types/mapConfig";
 import {
   AuthoredMap,
   AuthoredObject,
@@ -9,11 +9,20 @@ import {
   saveCustomMap,
   toRawConfig,
 } from "../domain/mapAuthoring";
+import { normalizeZoneKind } from "../domain/zones";
 import { PREFABS, groupPrefabs } from "../domain/prefabs";
 import { drawObject } from "./mapDraw";
 import { MAP_CHOICES } from "../state/syncleStore";
 
 const GRID = 20;
+
+/** Editable zone kinds shown in the editor. `none` is domain-level only
+ *  (point outside every zone) and can never be authored. */
+const ZONE_KIND_OPTIONS: { value: ZoneKind; label: string }[] = [
+  { value: "silent", label: "Silent（自习区）" },
+  { value: "discussion", label: "Discussion（讨论区）" },
+  { value: "rest", label: "Rest（休息区）" },
+];
 
 export interface MapEditorScreenProps {
   onClose: () => void;
@@ -34,6 +43,9 @@ export function MapEditorScreen({ onClose }: MapEditorScreenProps) {
   const [selectedUid, setSelectedUid] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [status, setStatus] = useState<string>("");
+  // Kind stamped onto newly created zones (dropdown next to the toolbar when
+  // the zone tool is active). Defaults to "discussion" = pre-M1 behavior.
+  const [newZoneKind, setNewZoneKind] = useState<ZoneKind>("discussion");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -256,7 +268,8 @@ export function MapEditorScreen({ onClose }: MapEditorScreenProps) {
       obj.text = "Type your note text in the inspector →";
     } else if (tool === "zone") {
       // Zones need a human-readable label so they show up in the "Who's
-      // where" sidebar with a meaningful name.
+      // where" sidebar with a meaningful name. Stamp the acoustic kind the
+      // author picked in the toolbar dropdown (defaults to "discussion").
       const existing = new Set(
         map.objects.filter((o) => o.type === "zone").map((o) => o.label),
       );
@@ -264,6 +277,7 @@ export function MapEditorScreen({ onClose }: MapEditorScreenProps) {
       while (existing.has(`Zone ${n}`)) n++;
       obj.label = `Zone ${n}`;
       obj.id = `zone-${n}`;
+      obj.kind = newZoneKind;
     } else if (tool === "portal") {
       // Portals need a destination map URL. Default to the first non-custom
       // map; user changes it in the inspector. Without a destination the
@@ -347,6 +361,20 @@ export function MapEditorScreen({ onClose }: MapEditorScreenProps) {
 
         <span className="spacer" />
 
+        {tool === "zone" && (
+          <label className="editor-toolbar-kind" title="Acoustic policy for newly drawn zones">
+            Zone kind
+            <select
+              value={newZoneKind}
+              onChange={(e) => setNewZoneKind(e.target.value as ZoneKind)}
+            >
+              {ZONE_KIND_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
         <button onClick={handleSave}>Save</button>
         <button onClick={handleExport}>Export JSON</button>
         <button onClick={handleClear}>Clear</button>
@@ -424,6 +452,21 @@ export function MapEditorScreen({ onClose }: MapEditorScreenProps) {
                     onChange={(e) => updateSelected({ label: e.target.value })}
                   />
                 </label>
+                {selected.type === "zone" && (
+                  <label>
+                    Zone kind
+                    <select
+                      value={normalizeZoneKind(selected.kind)}
+                      onChange={(e) =>
+                        updateSelected({ kind: e.target.value as ZoneKind })
+                      }
+                    >
+                      {ZONE_KIND_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 {selected.type === "note" && (
                   <label>
                     Note text

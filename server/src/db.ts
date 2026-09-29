@@ -18,6 +18,8 @@ export interface RoomStateRow {
   room: string;
   user_id: string;
   table_id: string | null;
+  zone: string | null;
+  zone_kind: string | null;
   x: number;
   y: number;
   updated_at: number;
@@ -46,6 +48,8 @@ function migrate(db: Db): void {
       room TEXT NOT NULL,
       user_id TEXT NOT NULL,
       table_id TEXT,
+      zone TEXT,
+      zone_kind TEXT,
       x REAL NOT NULL,
       y REAL NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -64,6 +68,23 @@ function migrate(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_channels_room
       ON channels(room, name);
   `);
+  ensureRoomStateZoneColumns(db);
+}
+
+/** M1 zone columns. Kept as a separate step (and exported for tests) so that
+ *  databases created before the M1 contract landed gain `zone` / `zone_kind`
+ *  without a full rebuild. */
+export function ensureRoomStateZoneColumns(db: Db): void {
+  const cols = db
+    .prepare<[], { name: string }>("PRAGMA table_info(room_state)")
+    .all()
+    .map((c) => c.name);
+  if (!cols.includes("zone")) {
+    db.exec("ALTER TABLE room_state ADD COLUMN zone TEXT");
+  }
+  if (!cols.includes("zone_kind")) {
+    db.exec("ALTER TABLE room_state ADD COLUMN zone_kind TEXT");
+  }
 }
 
 export function upsertUser(
@@ -104,16 +125,34 @@ export function upsertRoomState(
   x: number,
   y: number,
   now: number = Date.now(),
+  zone: string | null = null,
+  zoneKind: string | null = null,
 ): void {
   db.prepare(
-    `INSERT INTO room_state (room, user_id, table_id, x, y, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO room_state (room, user_id, table_id, zone, zone_kind, x, y, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(room, user_id) DO UPDATE SET
        table_id = excluded.table_id,
+       zone = excluded.zone,
+       zone_kind = excluded.zone_kind,
        x = excluded.x,
        y = excluded.y,
        updated_at = excluded.updated_at`,
-  ).run(room, userId, tableId, x, y, now);
+  ).run(room, userId, tableId, zone, zoneKind, x, y, now);
+}
+
+/** Returns the latest stored state for one participant, if any. Used by the
+ *  zone edge detector to compare the incoming `zone_kind` against the last one. */
+export function getRoomState(
+  db: Db,
+  room: string,
+  userId: string,
+): RoomStateRow | undefined {
+  return db
+    .prepare<[string, string], RoomStateRow>(
+      "SELECT * FROM room_state WHERE room = ? AND user_id = ?",
+    )
+    .get(room, userId);
 }
 
 export interface SnapshotEntry {
@@ -121,6 +160,10 @@ export interface SnapshotEntry {
   nickname: string;
   color: string;
   tableId: string | null;
+  /** Zone id the peer last reported, or null when in no zone. */
+  zone: string | null;
+  /** Zone kind the peer last reported (null when never reported). */
+  zone_kind: string | null;
   x: number;
   y: number;
   lastSeen: number;
@@ -150,6 +193,8 @@ export function getRoomSnapshot(
     nickname: r.nickname,
     color: r.color,
     tableId: r.table_id,
+    zone: r.zone,
+    zone_kind: r.zone_kind,
     x: r.x,
     y: r.y,
     lastSeen: r.updated_at,

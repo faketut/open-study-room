@@ -247,3 +247,34 @@ export async function setNowPlayingAttribute(
 ): Promise<void> {
   await room.localParticipant.setAttributes({ now_playing: nowPlaying });
 }
+
+/** Publish the local participant's current zone as LiveKit attributes.
+ *  Keys are verbatim per docs/contracts.md §"Zones (M1: quiet semantics)":
+ *  `zone` is the zone id (empty string = not inside any zone),
+ *  `zone_kind` is `silent` | `discussion` | `rest` | `none`.
+ *  Call only on zone-boundary crossings — zone changes are low-frequency
+ *  and must stay off the 20 Hz position hot path. */
+export async function setZoneAttributes(
+  room: Room,
+  zoneId: string,
+  zoneKind: string,
+): Promise<void> {
+  await room.localParticipant.setAttributes({
+    zone: zoneId,
+    zone_kind: zoneKind,
+  });
+}
+
+/** Spatial-audio distance falloff (M1 T3). Ported from Android
+ *  `SpatialAudioEngine`: linear, `maxDistance = 300` map px (same unit as
+ *  Android), clamped to [0, 1]. Beyond max distance the peer is inaudible
+ *  (caller should set volume 0). Replaces the pre-M1 binary same-table
+ *  gate (`audible = sameTable ? 1 : 0`); table membership no longer decides
+ *  audibility. */
+export const SPATIAL_AUDIO_MAX_DISTANCE = 300;
+export function attenuationFor(distPx: number): number {
+  const v = 1 - distPx / SPATIAL_AUDIO_MAX_DISTANCE;
+  if (v <= 0) return 0;
+  if (v >= 1) return 1;
+  return v;
+}

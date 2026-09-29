@@ -23,6 +23,8 @@ import com.example.syncle.domain.SyncleLog
 import com.example.syncle.domain.TableMeetingController
 import com.example.syncle.domain.TablePresence
 import com.example.syncle.domain.UserStatus
+import com.example.syncle.domain.ZonePresence
+import com.example.syncle.domain.ZoneTracker
 import com.example.syncle.ui.buildMeetingParticipants
 import com.example.syncle.ui.state.ConnectionStatus
 import com.example.syncle.ui.state.ConnectionUi
@@ -90,6 +92,13 @@ class SyncleViewModel : ViewModel() {
     private val authRepository = AuthRepository()
     private val snapshotApi = SnapshotApi()
     private val stateReporter = RoomStateReporter()
+
+    // M1 zone plumbing: current zone resolution (inert until Android models
+    // zones in its map config — see ZonePresence) and the boundary-crossing
+    // tracker that dedups participant-attribute writes.
+    private val zoneTracker = ZoneTracker()
+    private var localZoneId: String? = null
+    private var localZoneKind: ZonePresence.ZoneKind = ZonePresence.ZoneKind.NONE
     private var sessionUserId: String? = null
     private var sessionProfile: Profile? = null
     private var sessionRoom: String = ProfileStore.DEFAULT_ROOM
@@ -491,9 +500,25 @@ class SyncleViewModel : ViewModel() {
         val previousNearby = avatarState.nearbyItemId
         avatarState.move(delta, cache)
         spatialDirty.set(true)
+        syncZoneAttributes()
         if (avatarState.nearbyItemId != previousNearby) {
             pushUiState()
         }
+    }
+
+    /**
+     * M1: publish `zone` / `zone_kind` participant attributes when the local
+     * avatar crosses a zone boundary. [ZoneTracker] dedups, so movement
+     * inside the same zone never rewrites attributes.
+     */
+    private fun syncZoneAttributes() {
+        val config = mapConfig ?: return
+        val zoneId = ZonePresence.zoneIdFor(avatarState.position, config)
+        val kind = ZonePresence.kindForZoneId(zoneId)
+        localZoneId = zoneId
+        localZoneKind = kind
+        val payload = zoneTracker.crossedInto(zoneId, kind) ?: return
+        liveKitService?.setLocalAttributes(payload)
     }
 
     fun joinTableMeeting(tableId: String) {
@@ -842,6 +867,8 @@ class SyncleViewModel : ViewModel() {
                             token = token,
                             tableId = meeting.activeTableMeetingId,
                             position = avatarState.position,
+                            zoneId = localZoneId,
+                            zoneKind = localZoneKind.wireValue,
                         )
                     if (code == 401) {
                         // JWT rejected by backend (typically expired). Refresh in-place
@@ -918,6 +945,9 @@ class SyncleViewModel : ViewModel() {
             spatialAudio.clearAll()
             positionSync.reset()
             meeting.reset()
+            zoneTracker.reset()
+            localZoneId = null
+            localZoneKind = ZonePresence.ZoneKind.NONE
             lastSpeakingIds = emptySet()
             mapCache?.invalidateProximityCache()
             updateConnection { it.copy(status = ConnectionStatus.DISCONNECTED) }

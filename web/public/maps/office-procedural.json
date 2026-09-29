@@ -23,10 +23,10 @@
     { "type": "door", "label": "→ Kitchen", "x": 708, "y": 392, "width": 50, "height": 16 },
     { "type": "door", "label": "→ Kitchen", "x": 492, "y": 568, "width": 16, "height": 50 },
 
-    { "type": "zone", "label": "Engineering", "color": "#ff7849", "x": 40,  "y": 40,  "width": 432, "height": 332 },
-    { "type": "zone", "label": "Design",      "color": "#a674ff", "x": 528, "y": 40,  "width": 432, "height": 332 },
-    { "type": "zone", "label": "Lounge",      "color": "#5ac8fa", "x": 40,  "y": 432, "width": 432, "height": 332 },
-    { "type": "zone", "label": "Kitchen",     "color": "#34c759", "x": 528, "y": 432, "width": 432, "height": 332 },
+    { "type": "zone", "label": "Engineering", "kind": "silent", "color": "#ff7849", "x": 40,  "y": 40,  "width": 432, "height": 332 },
+    { "type": "zone", "label": "Design",      "kind": "silent", "color": "#a674ff", "x": 528, "y": 40,  "width": 432, "height": 332 },
+    { "type": "zone", "label": "Lounge",      "kind": "rest", "color": "#5ac8fa", "x": 40,  "y": 432, "width": 432, "height": 332 },
+    { "type": "zone", "label": "Kitchen",     "kind": "rest", "color": "#34c759", "x": 528, "y": 432, "width": 432, "height": 332 },
 
     { "type": "rug", "sprite": "rug_red_a", "x": 100, "y": 100, "width": 320, "height": 240 },
     { "type": "table", "id": "table-eng", "label": "Engineering Standup",

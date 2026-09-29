@@ -32,7 +32,22 @@ import {
   setStatusAttribute,
   setTableAttribute,
   setNowPlayingAttribute,
+  setZoneAttributes,
+  attenuationFor,
 } from "../data/liveKitService";
+import {
+  zoneKindAt,
+  zoneAllowsAudio,
+  zonesOf,
+  findZoneAt,
+  type ZoneKind,
+} from "../domain/zones";
+import {
+  micMayPublish,
+  reduceZoneCrossing,
+  shouldApplyVolume,
+} from "../domain/audioPolicy";
+import { reportState } from "../data/sessionApi";
 import { ChatPanel } from "./ChatPanel";
 import { VideoTiles } from "./VideoTiles";
 import { WhosWherePanel } from "./WhosWherePanel";
@@ -146,6 +161,41 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // Ref so the keydown closure (registered once) can read the current value.
   const micDeniedRef = useRef(false);
   useEffect(() => { micDeniedRef.current = micDenied; }, [micDenied]);
+  /** M1: zone kind of the local avatar ("none" outside any zone). Updated
+   *  by the game loop only on boundary crossings; drives the mic state
+   *  machine, PTT, publish gates, and spatial-audio scoping. */
+  const [zoneKind, setZoneKind] = useState<ZoneKind>("none");
+  const zoneKindRef = useRef<ZoneKind>("none");
+  useEffect(() => { zoneKindRef.current = zoneKind; }, [zoneKind]);
+  /** T4 push-to-talk: Space held while in a silent zone. Mic-only. */
+  const [pttHeld, setPttHeld] = useState(false);
+  const pttHeldRef = useRef(false);
+  /** Last published zone (id + kind). Debounces attribute writes: we only
+   *  call setZoneAttributes on boundary crossings, never for movement
+   *  inside the same zone. */
+  const lastZoneRef = useRef<{ id: string; kind: ZoneKind } | null>(null);
+  /** Mic intent remembered at silent entry (contract: `intendedMicOn`). */
+  const intendedMicOnRef = useRef(true);
+  /** Ref mirror of `userMuted` so the once-bound keydown handler and the
+   *  game-loop tick can toggle/read it without re-binding. */
+  const userMutedRef = useRef<boolean>(readPersistedMuted());
+  useEffect(() => { userMutedRef.current = userMuted; }, [userMuted]);
+  /** Single toggle path for the HUD button and the `M` key. While inside a
+   *  silent zone the mic stays forced-mute, but the toggle still updates
+   *  the remembered intent so leaving the zone restores what the user last
+   *  asked for. */
+  const toggleUserMuted = () => {
+    if (micDeniedRef.current) {
+      setMicDenied(false);
+      setUserMuted(false);
+      if (zoneKindRef.current === "silent") intendedMicOnRef.current = true;
+      return;
+    }
+    const next = !userMutedRef.current;
+    userMutedRef.current = next;
+    setUserMuted(next);
+    if (zoneKindRef.current === "silent") intendedMicOnRef.current = next;
+  };
   /** Camera opt-in. Defaults to OFF — users explicitly turn it on so we
    *  don't auto-prompt for permission on first sit. */
   const [userCamOff, setUserCamOff] = useState(true);
@@ -279,6 +329,27 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     setSelfStatus,
   ]);
 
+  // M1: state-report heartbeat. Zone-crossing reports above are the
+  // primary path, but a lost report (e.g. expired token at the crossing
+  // moment) would leave the server blind to our zone. 30s cadence mirrors
+  // Android's RoomStateReporter tick.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const s = useSyncle.getState().self;
+      const z = lastZoneRef.current;
+      if (!s || !cache?.backendUrl || !cache?.session?.token) return;
+      void reportState(cache.backendUrl, cache.room, cache.session.token, {
+        userId: cache.session.userId,
+        tableId: s.tableId ?? null,
+        x: s.x,
+        y: s.y,
+        zone: z && z.id !== "" ? z.id : null,
+        zone_kind: z?.kind ?? "none",
+      }).catch((err) => console.warn("reportState heartbeat failed", err));
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [cache]);
+
   // Track user activity so deriveStatus can flip to `away`. Listens on
   // window so we capture both game input and HUD interaction.
   useEffect(() => {
@@ -314,8 +385,15 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     if (chatOpen) setSeenChatLen(chatMessagesLen);
   }, [chatOpen, chatMessagesLen]);
   // When chat opens, drop any held movement keys so the avatar doesn't drift.
+  // Also release PTT: typing in chat must never leave the mic hot.
   useEffect(() => {
-    if (chatOpen) keysRef.current.clear();
+    if (chatOpen) {
+      keysRef.current.clear();
+      if (pttHeldRef.current) {
+        pttHeldRef.current = false;
+        setPttHeld(false);
+      }
+    }
   }, [chatOpen]);
 
   // Keyboard input. WASD/arrows move; E toggles "sit at nearest table".
@@ -328,6 +406,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       if (isMoveKey(e.key)) {
         e.preventDefault();
         keysRef.current.add(e.key.toLowerCase());
+      } else if (e.key === " ") {
+        // T4 push-to-talk: hold Space to talk in silent zones (mic only).
+        // Space has no PTT semantics in discussion/rest/none zones, and is
+        // ignored while typing in chat.
+        if (typingRef.current) return;
+        if (e.repeat) return;
+        if (zoneKindRef.current === "silent" && !pttHeldRef.current) {
+          e.preventDefault();
+          pttHeldRef.current = true;
+          setPttHeld(true);
+        }
       } else if (e.key.toLowerCase() === "e") {
         e.preventDefault();
         // Toggle: if seated -> stand; else try to sit at nearest table.
@@ -355,16 +444,11 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           }
         }
       } else if (e.key.toLowerCase() === "m") {
-        // Manual mute toggle. Only meaningful while seated, but we let users
-        // toggle it any time so the state persists across sit/stand. When
-        // mic is in the "denied" latch, pressing M acts as a retry.
+        // Manual mute toggle. Routes through toggleUserMuted so the
+        // silent-zone intent bookkeeping stays consistent. When mic is in
+        // the "denied" latch, pressing M acts as a retry.
         e.preventDefault();
-        if (micDeniedRef.current) {
-          setMicDenied(false);
-          setUserMuted(false);
-        } else {
-          setUserMuted((prev) => !prev);
-        }
+        toggleUserMuted();
       } else if (e.key.toLowerCase() === "t") {
         // Open chat. (Closing is handled by the input's Esc handler so it
         // doesn't compete with typed 't' characters.)
@@ -407,6 +491,13 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       if (isMoveKey(e.key)) {
         e.preventDefault();
         keysRef.current.delete(e.key.toLowerCase());
+      } else if (e.key === " ") {
+        // T4: releasing Space ends the push-to-talk window.
+        if (pttHeldRef.current) {
+          e.preventDefault();
+          pttHeldRef.current = false;
+          setPttHeld(false);
+        }
       }
     };
     window.addEventListener("keydown", down);
@@ -416,6 +507,20 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       window.removeEventListener("keyup", up);
     };
   }, [room, setSelfTable]);
+
+  // Safety: if the window loses focus mid-PTT (alt-tab while holding
+  // Space), the keyup never fires — release PTT on blur so the mic can't
+  // get stuck open in a silent zone.
+  useEffect(() => {
+    const release = () => {
+      if (pttHeldRef.current) {
+        pttHeldRef.current = false;
+        setPttHeld(false);
+      }
+    };
+    window.addEventListener("blur", release);
+    return () => window.removeEventListener("blur", release);
+  }, []);
 
   // Game loop: move local avatar + 20Hz position broadcast.
   useEffect(() => {
@@ -509,6 +614,66 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         }
       }
 
+      // M1 zone tracking. Zone changes are low-frequency, so they stay off
+      // the 20 Hz hot path: we only publish `zone` / `zone_kind` attributes
+      // when crossing a boundary (debounced via lastZoneRef), and run the
+      // mic state machine transitions (enter/leave silent). Zone policy
+      // beats table policy: entering silent force-mutes even while seated.
+      const zoneSelf = useSyncle.getState().self;
+      if (zoneSelf) {
+        const kind: ZoneKind = zoneKindAt(
+          zonesOf(map),
+          zoneSelf.x,
+          zoneSelf.y,
+        );
+        const zoneObj = findZoneAt(zoneSelf.x, zoneSelf.y, map);
+        const zoneId = zoneObj?.key ?? "";
+        const prevZone = lastZoneRef.current;
+        if (
+          !prevZone ||
+          prevZone.kind !== kind ||
+          prevZone.id !== zoneId
+        ) {
+          const prevKind: ZoneKind = prevZone?.kind ?? "none";
+          lastZoneRef.current = { id: zoneId, kind };
+          setZoneKind(kind);
+          zoneKindRef.current = kind;
+          void setZoneAttributes(room, zoneId, kind).catch((err) =>
+            console.warn("setZoneAttributes failed", err),
+          );
+          // M1: report (x, y, table, zone) to the server so it can enforce
+          // the silent-zone media policy server-side and serve late joiners
+          // from the snapshot (docs/contracts.md "Zones"). A 401 here just
+          // warns; the 30s heartbeat below retries.
+          if (cache?.backendUrl && cache.session?.token) {
+            void reportState(
+              cache.backendUrl,
+              cache.room,
+              cache.session.token,
+              {
+                userId: cache.session.userId,
+                tableId: zoneSelf.tableId ?? null,
+                x: zoneSelf.x,
+                y: zoneSelf.y,
+                zone: zoneId === "" ? null : zoneId,
+                zone_kind: kind,
+              },
+            ).catch((err) => console.warn("reportState failed", err));
+          }
+          const crossed = reduceZoneCrossing(
+            { kind: prevKind, intendedMicOn: intendedMicOnRef.current },
+            kind,
+            userMutedRef.current,
+            zoneAllowsAudio(kind),
+          );
+          intendedMicOnRef.current = crossed.intendedMicOn;
+          if (crossed.userMuted !== userMutedRef.current) {
+            userMutedRef.current = crossed.userMuted;
+            setUserMuted(crossed.userMuted);
+          }
+        }
+      }
+
       // Update "nearest table" hint for HUD + canvas highlight. Cheap; runs
       // every frame against the small table list. Skipped when seated.
       const liveSelf = useSyncle.getState().self;
@@ -556,37 +721,58 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     };
   }, [map, room, setSelfPosition, nearbyTable, nearbyNoteIndex, nearbyBoardIndex]);
 
-  // Audio scoping: mic only publishes while seated AND the user hasn't
-  // manually muted. We only hear remote peers sitting at the *same* table.
-  // Same-table-only is enforced client-side via per-peer volume gain —
-  // privacy-wise, peers in other tables still receive our packets while we
-  // sit (their gain is 0), so future work could move this to server-side
-  // track subscription.
+  // M1 mic publish gate ("quiet by default"). No tracks are published on
+  // room join; mic MAY publish when (a) seated at a table in a
+  // discussion/rest/none zone, (b) PTT held in a silent zone (mic only),
+  // or (c) the user manually enables mic in discussion/rest. Zone policy
+  // beats table policy: seated inside a silent zone stays muted.
   useEffect(() => {
     if (!self) return;
-    const shouldPublish = self.tableId != null && !userMuted && !micDenied;
+    const shouldPublish =
+      !micDenied &&
+      micMayPublish({
+        zoneKind,
+        seated: self.tableId != null,
+        intendedMicOn: !userMuted,
+        pttHeld,
+      });
     void setMicEnabled(room, shouldPublish).then((res) => {
       if (res === "denied") {
         setMicDenied(true);
         setUserMuted(true);
       }
     });
-  }, [room, self?.tableId, userMuted, micDenied]);
+  }, [room, self?.tableId, zoneKind, userMuted, pttHeld, micDenied]);
 
   // Camera publish gate. Mirrors mic: on only while seated and the user has
-  // opted in. Permission denial latches `camDenied` and forces userCamOff
-  // back to true so we don't re-prompt every render.
+  // opted in. M1: camera never publishes in silent zones, even with opt-in.
+  // Permission denial latches `camDenied` and forces userCamOff back to
+  // true so we don't re-prompt every render.
   useEffect(() => {
     if (!self) return;
-    const shouldPublish = self.tableId != null && !userCamOff && !camDenied;
+    const shouldPublish =
+      self.tableId != null &&
+      !userCamOff &&
+      !camDenied &&
+      zoneAllowsAudio(zoneKind);
     void setCameraEnabled(room, shouldPublish).then((res) => {
       if (res === "denied") {
         setCamDenied(true);
         setUserCamOff(true);
       }
     });
-  }, [room, self?.tableId, userCamOff, camDenied]);
+  }, [room, self?.tableId, userCamOff, camDenied, zoneKind]);
 
+  // Screen share is allowed only in discussion zones (contract). Stop an
+  // active share when leaving discussion. (Standing up stops it separately.)
+  useEffect(() => {
+    if (zoneKind !== "discussion" && sharingScreen) {
+      void setScreenShareEnabled(room, false);
+    }
+  }, [room, zoneKind, sharingScreen]);
+
+  // Same-table scoping for video subscriptions (unchanged by M1): we don't
+  // pay bandwidth for cameras we'd never render anyway.
   useEffect(() => {
     if (!self) return;
     const myTable = self.tableId;
@@ -594,18 +780,54 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     for (const identity of room.remoteParticipants.keys()) {
       const peerTable = peers.get(identity)?.tableId ?? null;
       const sameTable = myTable != null && peerTable === myTable;
-      // M5 DND: when manualBusy is on, mute all incoming audio even when at
-      // the same table. Video subscriptions stay so the user can still see
-      // who's around.
-      const audible = sameTable && !selfManualBusy;
-      setPeerVolume(room, identity, audible ? 1 : 0);
-      // Same-table scoping for video: unsubscribe from non-table peers so
-      // we don't pay bandwidth for cameras we'd never render anyway.
       setPeerVideoSubscribed(room, identity, sameTable);
     }
     // peerTableSig deliberately included so this re-runs when *any* peer
     // changes table, without subscribing to 20Hz position updates.
-  }, [room, self?.tableId, peerTableSig, selfManualBusy]);
+  }, [room, self?.tableId, peerTableSig]);
+
+  // T3 spatial audio. Replaces the pre-M1 binary `audible = sameTable` gate:
+  // in discussion/rest/none zones every peer is audible with linear distance
+  // attenuation (ported from Android SpatialAudioEngine); in silent zones
+  // peers are inaudible unless PTT is held. M5 DND (manualBusy) still mutes
+  // all incoming audio. Runs on a 250ms cadence reading the store directly
+  // (not the 20Hz position stream); an epsilon cache skips redundant
+  // setVolume calls, mirroring Android's shouldApplyVolume.
+  useEffect(() => {
+    const lastVolume = new Map<string, number>();
+    const applyVolumes = () => {
+      const st = useSyncle.getState();
+      const me = st.self;
+      if (!me) return;
+      const myKind = zoneKindRef.current;
+      const ptt = pttHeldRef.current;
+      const alive = new Set<string>();
+      for (const identity of room.remoteParticipants.keys()) {
+        alive.add(identity);
+        const peer = st.peers.get(identity);
+        let volume: number;
+        if (me.manualBusy) {
+          volume = 0;
+        } else if (myKind === "silent" && !ptt) {
+          volume = 0;
+        } else if (!peer) {
+          volume = 0;
+        } else {
+          volume = attenuationFor(Math.hypot(peer.x - me.x, peer.y - me.y));
+        }
+        if (shouldApplyVolume(lastVolume, identity, volume)) {
+          setPeerVolume(room, identity, volume);
+        }
+      }
+      // Prune departed peers so a rejoin starts with a cold cache.
+      for (const id of lastVolume.keys()) {
+        if (!alive.has(id)) lastVolume.delete(id);
+      }
+    };
+    applyVolumes();
+    const id = window.setInterval(applyVolumes, 250);
+    return () => window.clearInterval(id);
+  }, [room]);
 
   // M5 theme: apply to the document root so CSS `[data-theme="dark"]`
   // overrides take effect. Persistence is handled by the store setter.
@@ -626,7 +848,16 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   if (!map || !self) return null;
 
   const seated = self.tableId != null;
-  const micActive = seated && !userMuted && !micDenied;
+  // Actual mic liveness under the M1 publish gate (a/b/c). In silent zones
+  // this is true only while PTT is held.
+  const micActive =
+    !micDenied &&
+    micMayPublish({
+      zoneKind,
+      seated,
+      intendedMicOn: !userMuted,
+      pttHeld,
+    });
   const camActive = seated && !userCamOff && !camDenied;
 
   return (
@@ -746,6 +977,11 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             Press <span className="key">F</span> to open board
           </div>
         )}
+        {zoneKind === "silent" && (
+          <div className="peers">
+            Silent zone — hold <span className="key">Space</span> to talk
+          </div>
+        )}
         {micDenied && (
           <div className="perm-banner" role="alert">
             <MicOff size={14} aria-hidden="true" />
@@ -773,15 +1009,18 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           if (micDenied) {
             setMicDenied(false);
             setUserMuted(false);
+            if (zoneKindRef.current === "silent") intendedMicOnRef.current = true;
             return;
           }
-          setUserMuted((v) => !v);
+          toggleUserMuted();
         }}
         title={
-          !seated
-            ? "Sit at a table to enable mic (M)"
-            : micDenied
-              ? "Mic blocked — click to retry"
+          micDenied
+            ? "Mic blocked — click to retry"
+            : zoneKind === "silent"
+              ? pttHeld
+                ? "Talking (push-to-talk) — release Space to mute"
+                : "Muted — silent zone (hold Space to talk)"
               : userMuted
                 ? "Unmute (M)"
                 : "Mute (M)"
@@ -806,11 +1045,13 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         title={
           !seated
             ? "Sit at a table to enable camera"
-            : camDenied
-              ? "Camera blocked — check browser permissions"
-              : userCamOff
-                ? "Turn on camera"
-                : "Turn off camera"
+            : zoneKind === "silent"
+              ? "Camera unavailable in silent zones"
+              : camDenied
+                ? "Camera blocked — check browser permissions"
+                : userCamOff
+                  ? "Turn on camera"
+                  : "Turn off camera"
         }
         disabled={!seated}
         aria-pressed={!camActive}
@@ -827,11 +1068,13 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         title={
           !seated
             ? "Sit at a table to share your screen"
-            : sharingScreen
-              ? "Stop sharing your screen"
-              : "Share your screen with the table"
+            : zoneKind !== "discussion"
+              ? "Screen share is only available in discussion zones"
+              : sharingScreen
+                ? "Stop sharing your screen"
+                : "Share your screen with the table"
         }
-        disabled={!seated}
+        disabled={!seated || zoneKind !== "discussion"}
         aria-pressed={sharingScreen}
       >
         {sharingScreen ? <MonitorOff size={14} aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}

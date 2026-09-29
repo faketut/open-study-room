@@ -28,6 +28,10 @@ export interface RawMapObject extends RawRect {
   type: MapObjectType;
   label?: string;
   color?: string;
+  /** For `zone` type: acoustic policy (see `ZoneKind`). Optional in the JSON
+   *  so old maps keep parsing — the parser defaults a missing/invalid kind
+   *  to `"discussion"` (backward compatibility, contracts.md "Zones (M1)"). */
+  kind?: ZoneKind;
   /** For `note` type: the body text shown when a user reads the note. */
   text?: string;
   /** For `portal` type: the map URL to teleport to when the local avatar
@@ -106,11 +110,22 @@ export type MapObjectType =
   | "portal"
   | "board";
 
+/** Acoustic policy of a `zone` object (contracts.md "Zones (M1): quiet
+ *  semantics"). `silent` forces mute on entry; `discussion`/`rest` allow
+ *  proximity voice (rest exists for map semantics/stats only); `none` is a
+ *  domain-level value meaning "outside every zone" and is never authored —
+ *  it is treated as `discussion` (pre-M1 behavior). */
+export type ZoneKind = "silent" | "discussion" | "rest" | "none";
+
 export interface MapObject extends Rect {
   id?: string;
   type: MapObjectType;
   label?: string;
   color?: string;
+  /** Acoustic policy for `zone` objects. Required by the contract on every
+   *  zone object; the parser guarantees it is populated (old maps default
+   *  to `"discussion"`). Other object types leave it unset. */
+  kind?: ZoneKind;
   /** For `note` type: the body text shown when a user reads the note. */
   text?: string;
   /** For `portal` type. See RawMapObject.destination. */

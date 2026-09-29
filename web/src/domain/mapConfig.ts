@@ -6,6 +6,7 @@ import type {
   Rect,
   Table,
 } from "../types/mapConfig";
+import { normalizeZoneKind } from "./zones";
 import { CUSTOM_MAP_STORAGE_KEY, CUSTOM_MAP_URL } from "./mapAuthoring";
 
 // Object types that block avatar movement. Anything not in this set is
@@ -43,6 +44,10 @@ export async function loadMapConfig(url = "/map_config.json"): Promise<MapConfig
     type: o.type,
     label: o.label,
     color: o.color,
+    // Zone acoustic policy (contracts.md "Zones (M1)"). Old maps were
+    // authored without `kind` — normalizeZoneKind defaults those to
+    // "discussion", preserving pre-M1 unrestricted-audio behavior.
+    kind: normalizeZoneKind(o.kind),
     text: o.text,
     destination: o.destination,
     repo: o.repo,

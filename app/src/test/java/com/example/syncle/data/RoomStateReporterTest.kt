@@ -39,6 +39,8 @@ class RoomStateReporterTest {
                     token = "jwt.tok",
                     tableId = "t-3",
                     position = Offset(123.5f, 456.25f),
+                    zoneId = "study-hall",
+                    zoneKind = "silent",
                 )
 
             assertEquals(200, code)
@@ -51,6 +53,19 @@ class RoomStateReporterTest {
             assertEquals("t-3", body.getString("tableId"))
             assertEquals(123.5, body.getDouble("x"), 0.001)
             assertEquals(456.25, body.getDouble("y"), 0.001)
+            assertEquals("study-hall", body.getString("zone"))
+            assertEquals("silent", body.getString("zone_kind"))
+        }
+
+    @Test
+    fun `defaults report null zone and none zone_kind`() =
+        runTest {
+            server.enqueue(MockResponse().setBody("{}"))
+            val reporter = RoomStateReporter(server.url("/").toString(), OkHttpClient())
+            reporter.report("r1", "u-1", "t", null, Offset.Zero)
+            val body = JSONObject(server.takeRequest().body.readUtf8())
+            assertTrue(body.isNull("zone"))
+            assertEquals("none", body.getString("zone_kind"))
         }
 
     @Test

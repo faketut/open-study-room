@@ -58,6 +58,46 @@ export function getOrCreateDeviceId(): string {
   return id;
 }
 
+// ---------- State report (M1 quiet semantics) ----------
+// Mirrors Android's RoomStateReporter: tells the server (x, y, table, zone)
+// so it can enforce the silent-zone media policy server-side and serve
+// late joiners from the snapshot. See docs/contracts.md "Zones".
+
+export interface StateReportBody {
+  userId: string;
+  tableId?: string | null;
+  x: number;
+  y: number;
+  zone?: string | null;
+  zone_kind?: "silent" | "discussion" | "rest" | "none";
+}
+
+export async function reportState(
+  backendUrl: string,
+  room: string,
+  token: string,
+  body: StateReportBody,
+): Promise<void> {
+  const url = `${backendUrl.replace(/\/$/, "")}/v1/rooms/${encodeURIComponent(room)}/state`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let details: unknown;
+    try {
+      details = await res.json();
+    } catch {
+      details = await res.text().catch(() => undefined);
+    }
+    throw new SessionApiError(`POST state ${res.status}`, res.status, details);
+  }
+}
+
 // ---------- Channels (M3 rich chat) ----------
 
 export interface ChannelDto {

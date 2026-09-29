@@ -20,7 +20,7 @@
     { "type": "plant", "x": 50,  "y": 414, "width": 36, "height": 36 },
     { "type": "plant", "x": 614, "y": 414, "width": 36, "height": 36 },
 
-    { "type": "zone", "id": "zone-lounge", "label": "Lounge", "x": 80, "y": 80, "width": 540, "height": 340, "color": "rgba(170,120,255,0.10)" },
+    { "type": "zone", "id": "zone-lounge", "label": "Lounge", "kind": "rest", "x": 80, "y": 80, "width": 540, "height": 340, "color": "rgba(170,120,255,0.10)" },
 
     {
       "type": "portal",

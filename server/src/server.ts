@@ -2,7 +2,8 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { loadConfig } from "./config.js";
 import { openDb } from "./db.js";
-import { TokenSigner } from "./livekit.js";
+import { TokenSigner, createRoomMutator } from "./livekit.js";
+import { ZoneMutePolicy } from "./zones.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerSnapshotRoutes } from "./routes/snapshot.js";
 import { registerStateRoutes } from "./routes/state.js";
@@ -33,7 +34,12 @@ export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
     },
   });
   registerSnapshotRoutes(app, db);
-  registerStateRoutes(app, { db, apiSecret: cfg.LIVEKIT_API_SECRET });
+  // M1 server-side media isolation: entering a silent zone force-mutes the
+  // participant's mic track via the LiveKit RoomServiceClient.
+  const zonePolicy = new ZoneMutePolicy(
+    createRoomMutator(cfg.LIVEKIT_URL, cfg.LIVEKIT_API_KEY, cfg.LIVEKIT_API_SECRET),
+  );
+  registerStateRoutes(app, { db, apiSecret: cfg.LIVEKIT_API_SECRET, zonePolicy });
   registerChannelRoutes(app, { db, apiSecret: cfg.LIVEKIT_API_SECRET });
 
   app.addHook("onClose", async () => {

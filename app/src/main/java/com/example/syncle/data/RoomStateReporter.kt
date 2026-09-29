@@ -3,6 +3,7 @@ package com.example.syncle.data
 import androidx.compose.ui.geometry.Offset
 import com.example.syncle.BuildConfig
 import com.example.syncle.domain.SyncleLog
+import com.example.syncle.domain.ZonePresence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -30,6 +31,10 @@ class RoomStateReporter(
      * `null` if the request failed before getting a response (network error,
      * empty backend URL, etc.). Callers can treat `401` specially to trigger a
      * session-token refresh.
+     *
+     * `zoneId` is the containing zone's id (null when in no zone) and
+     * `zoneKind` the client-computed kind (`silent|discussion|rest|none`;
+     * defaults to `"none"` until Android models zones in its map config).
      */
     suspend fun report(
         room: String,
@@ -37,6 +42,8 @@ class RoomStateReporter(
         token: String,
         tableId: String?,
         position: Offset,
+        zoneId: String? = null,
+        zoneKind: String = ZonePresence.ZoneKind.NONE.wireValue,
     ): Int? =
         withContext(Dispatchers.IO) {
             val base = backendUrl.trim().trimEnd('/').ifEmpty { return@withContext null }
@@ -46,6 +53,8 @@ class RoomStateReporter(
                     if (tableId != null) put("tableId", tableId) else put("tableId", JSONObject.NULL)
                     put("x", position.x.toDouble())
                     put("y", position.y.toDouble())
+                    if (zoneId != null) put("zone", zoneId) else put("zone", JSONObject.NULL)
+                    put("zone_kind", zoneKind)
                 }
             val request =
                 Request.Builder()

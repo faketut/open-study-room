@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { bucketByZone, zonesOf } from "../domain/zones";
+import { bucketByZone, zoneAllowsAudio, zonesOf, ZONE_KIND_LABELS } from "../domain/zones";
+import type { ZoneKind } from "../domain/zones";
 import { LOCAL_CHAT_IDENTITY, useSyncle } from "../state/syncleStore";
 
 /** "Who's where" sidebar. Lists every zone in the current map with the
@@ -62,6 +63,19 @@ export function WhosWherePanel() {
   );
   const unzoned = Math.max(0, totalKnown - inAnyZone);
 
+  // Group zones by acoustic kind (contracts.md "Zones (M1)"). Each group
+  // shows its semantic label — e.g. "自习区 · 12 人" — plus the zones and
+  // avatars inside it. Only kinds that have authored zones are shown.
+  const KIND_ORDER: ZoneKind[] = ["silent", "discussion", "rest"];
+  const zoneGroups = KIND_ORDER.map((kind) => {
+    const groupZones = zones.filter((z) => z.kind === kind);
+    const total = groupZones.reduce(
+      (s, z) => s + (buckets.get(z.key) ?? []).length,
+      0,
+    );
+    return { kind, zones: groupZones, total };
+  }).filter((g) => g.zones.length > 0);
+
   const toggle = () => {
     setCollapsed((c) => {
       const next = !c;
@@ -111,39 +125,50 @@ export function WhosWherePanel() {
       </button>
       {!collapsed && (
         <ul className="whos-where-list" role="list">
-          {zones.map((z) => {
-            const occupants = buckets.get(z.key) ?? [];
-            return (
-              <li key={z.key} className="whos-where-zone">
-                <div className="whos-where-zone-header">
-                  <span className="whos-where-zone-name">{z.label}</span>
-                  <span className="whos-where-zone-count">{occupants.length}</span>
-                </div>
-                {occupants.length > 0 ? (
-                  <div className="whos-where-avatars">
-                    {occupants.slice(0, 5).map((o) => (
-                      <span
-                        key={o.identity}
-                        className="whos-where-avatar"
-                        style={{ background: o.color }}
-                        title={o.name}
-                        aria-label={o.name}
-                      >
-                        {initials(o.name)}
-                      </span>
-                    ))}
-                    {occupants.length > 5 && (
-                      <span className="whos-where-overflow">
-                        +{occupants.length - 5}
-                      </span>
+          {zoneGroups.map((g) => (
+            <li key={g.kind} className={`whos-where-kind whos-where-kind--${g.kind}`}>
+              <div
+                className="whos-where-kind-header"
+                title={zoneAllowsAudio(g.kind) ? "Talking allowed" : "Quiet — mic forced off"}
+              >
+                <span className="whos-where-kind-name">{ZONE_KIND_LABELS[g.kind]}</span>
+                <span className="whos-where-kind-count">{g.total} 人</span>
+              </div>
+              {g.zones.map((z) => {
+                const occupants = buckets.get(z.key) ?? [];
+                return (
+                  <div key={z.key} className="whos-where-zone">
+                    <div className="whos-where-zone-header">
+                      <span className="whos-where-zone-name">{z.label}</span>
+                      <span className="whos-where-zone-count">{occupants.length}</span>
+                    </div>
+                    {occupants.length > 0 ? (
+                      <div className="whos-where-avatars">
+                        {occupants.slice(0, 5).map((o) => (
+                          <span
+                            key={o.identity}
+                            className="whos-where-avatar"
+                            style={{ background: o.color }}
+                            title={o.name}
+                            aria-label={o.name}
+                          >
+                            {initials(o.name)}
+                          </span>
+                        ))}
+                        {occupants.length > 5 && (
+                          <span className="whos-where-overflow">
+                            +{occupants.length - 5}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="whos-where-empty">Empty</div>
                     )}
                   </div>
-                ) : (
-                  <div className="whos-where-empty">Empty</div>
-                )}
-              </li>
-            );
-          })}
+                );
+              })}
+            </li>
+          ))}
           {unzoned > 0 && (
             <li className="whos-where-zone whos-where-zone--ghost">
               <div className="whos-where-zone-header">

@@ -120,3 +120,117 @@ The JWT must include `canUpdateOwnMetadata: true` for clients to be allowed
 to call `setAttributes`. Without it, LiveKit responds with
 `SignalRequestError: does not have permission to update own metadata`.
 See [server/src/livekit.ts](../server/src/livekit.ts).
+
+## Zones (M1: quiet semantics)
+
+Syncle is a **virtual study room**: the default assumption is quiet, not
+"walk up and talk". Zones carry an acoustic policy (`kind`) that overrides
+the table conversation behavior. `meeting` semantics are folded into
+`discussion`; `restricted` is reserved for P1.
+
+### Zone kind
+
+| Kind | Meaning | Audio policy |
+| --- | --- | --- |
+| `silent` | Study area. Quiet by default. | Forced mute on entry; server does not forward this participant's audio. Exception: push-to-talk (below). |
+| `discussion` | Discussion area. Talking allowed. | Distance-attenuated proximity voice (see below). |
+| `rest` | Lounge/break area. Talking allowed. | Same audio policy as `discussion` (distinct kind for map semantics and stats). |
+| `none` | Not inside any zone. | Treated as `discussion` (preserves pre-M1 behavior). |
+
+Map config: every zone object gains a **required** `kind` field. Zones without
+`kind` (old maps) parse as `discussion` for backward compatibility. The map
+editor MUST allow annotating `kind`.
+
+**Precedence: zone policy > table policy.** Sitting at a table (`table_id`
+non-empty) inside a `silent` zone still forces mute. The table remains the
+conversation *unit* (who is grouped together); the zone is the outer
+*acoustic* semantic.
+
+### Microphone state machine (client-side)
+
+Logical mic states: `MUTED`, `LIVE` (published and audible), `PTT`
+(push-to-talk, temporary).
+
+| Current zone | Policy |
+| --- | --- |
+| `silent` | Forced `MUTED`. Exception: holding **Space** enters `PTT` (mic-only, temporary publish); releasing Space returns to `MUTED`. PTT has no effect in other zones. |
+| `discussion` / `rest` / `none` | User toggle decides `MUTED` / `LIVE`. |
+
+Transitions the client MUST implement:
+
+- `enter(silent)` → `forceMute()`: remember pre-entry user intent
+  (`intendedMicOn: boolean`), then mute.
+- `leave(silent)` → if `intendedMicOn` was true AND the new zone allows
+  audio, restore `LIVE`; otherwise stay `MUTED`.
+
+### Distance attenuation (discussion / rest / none)
+
+Ported from Android `SpatialAudioEngine`; all three sides use identical
+constants. This **replaces** the old web binary gate
+(`audible = sameTable ? 1 : 0`); table membership no longer decides
+audibility.
+
+| Constant | Value |
+| --- | --- |
+| `maxDistance` | `300` (map px, same unit as Android) |
+| Volume | `v = clamp(1 - dist / maxDistance, 0, 1)` (linear) |
+| Beyond max | `v = 0` → not audible (client SHOULD unsubscribe / set volume 0) |
+
+### Server-side media isolation
+
+The server derives each participant's zone kind from the `zone_kind`
+it receives in state reports (see below):
+
+- On entering `silent`: resolve the participant's published microphone
+  track SID via `listParticipants` (track source `MICROPHONE`), then call
+  LiveKit Server API `mutePublishedTrack(room, identity, trackSid, true)`.
+  Server-side mute wins even if the client misbehaves. No mic track
+  published (quiet-by-default join) → nothing to mute.
+- On leaving `silent`: `mutePublishedTrack(..., false)` to restore, but only
+  if the participant's remembered intent was mic-on (server keeps
+  `intendedMicOn` in memory per participant).
+- PTT windows are not server-muted (short-lived; abuse is covered by the M2
+  moderation loop).
+
+### Transport
+
+- **Position packet (17 bytes) is UNCHANGED**: `type=1 | x:f32 | y:f32 | seq:i64`.
+  Zone changes are low-frequency; they do not belong on the 20 Hz hot path.
+- **Participant attributes** (realtime, via `setAttributes`; keys verbatim):
+
+| Key | Type | Purpose | Empty-string meaning |
+| --- | --- | --- | --- |
+| `zone` | string | Id of the zone the participant is currently inside | "not inside any zone" |
+| `zone_kind` | string | `silent` \| `discussion` \| `rest` \| `none` | "not published" — keep existing |
+
+Clients MUST update `zone` / `zone_kind` when crossing a zone boundary
+(debounced: do not rewrite attributes for movement inside the same zone).
+
+- **State report** `POST /v1/rooms/:room/state` body gains:
+  `zone: string | null` (zone id; `null` when in no zone) and
+  `zone_kind: "silent" | "discussion" | "rest" | "none"` (client-computed;
+  the server trusts it for mute decisions — the server does not load map
+  files, and abuse is covered by the M2 moderation loop).
+- **Snapshot** `GET /v1/rooms/:room/snapshot` peer entries gain
+  `zone` / `zone_kind` (same semantics as the attributes above).
+
+### "Quiet by default" publish principle
+
+- On room join, clients publish **no** microphone/camera tracks.
+- Mic MAY be published when ANY of: (a) seated at a table AND zone is
+  `discussion`/`rest`/`none`; (b) PTT held in a `silent` zone (mic only);
+  (c) user manually enables mic in `discussion`/`rest`.
+- Camera MAY be published only in (a)/(c) with explicit user opt-in; never
+  in `silent` zones.
+- Screen share is allowed only in `discussion` zones.
+
+### Where it lives (to be filled as M1 lands)
+
+| Side | File | Symbol |
+| --- | --- | --- |
+| Web | `web/src/domain/zones.ts` | `ZoneKind`, `kind` field, policy helpers |
+| Web | `web/src/data/liveKitService.ts` | `setZoneAttributes`, distance attenuation |
+| Web | `web/src/data/sessionApi.ts` | `reportState` (zone-bearing state reports: on boundary crossing + 30s heartbeat) |
+| Server | `server/src/routes/state.ts` | `zone` field ingestion |
+| Server | `server/src/livekit.ts` | server-side mute helper |
+| Android | `app/.../data/RoomStateReporter.kt` | `zone` field reporting |
