@@ -1,8 +1,8 @@
 {
-  "name": "syncle-server",
+  "name": "open-study-room-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Syncle auth + room-state backend (LiveKit token signing, SQLite snapshots)",
+  "description": "Open Study Room auth + room-state backend (LiveKit token signing, SQLite snapshots)",
   "type": "module",
   "engines": {
     "node": ">=20"

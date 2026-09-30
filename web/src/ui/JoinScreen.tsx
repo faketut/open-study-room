@@ -251,7 +251,7 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
   return (
     <div className="join-screen">
       <div className="join-card">
-        <h1>Syncle Web</h1>
+        <h1>Open Study Room</h1>
 
         <label>
           Nickname
@@ -266,7 +266,7 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
           Room
           <input
             value={joinDraft.room}
-            placeholder="syncle-office"
+            placeholder="open-study-room"
             onChange={(e) => setJoinDraft({ room: e.target.value })}
           />
           {!roomOk && joinDraft.room.length > 0 && (

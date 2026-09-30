@@ -1,4 +1,4 @@
-# Syncle — 免费开源虚拟自习室
+# Open Study Room — 免费开源虚拟自习室
 
 > **What**: a 2D virtual study room — "study with strangers". Walk an avatar
 > into a quiet hall, sit down, start a focus session, and feel the presence of
@@ -10,7 +10,7 @@
 **Languages:** [English](#english) · [中文](#中文)
 
 > **Changelog — 2026-09-29**: the Kotlin Android client (`app/`) was removed.
-> Syncle is now **Web + Server** only. Mobile goes through phone browsers
+> Open Study Room is now **Web + Server** only. Mobile goes through phone browsers
 > (the web client is heading toward touch-friendly controls); a Capacitor
 > shell around the web client remains an option if native push / background
 > audio is ever needed.
@@ -78,7 +78,7 @@ cd server && npm test          # route/contract tests
 <a id="english"></a>
 ## English
 
-**Syncle** is a free, open-source virtual study room. Instead of scheduled
+**Open Study Room** is a free, open-source virtual study room. Instead of scheduled
 calls, you walk a 2D avatar into a study hall: silent zones keep everyone
 muted (enforced server-side), discussion zones allow distance-attenuated
 proximity voice, and sitting at a table starts a focus session.
@@ -113,7 +113,7 @@ for component details.
 <a id="中文"></a>
 ## 中文
 
-**Syncle** 是免费开源的虚拟自习室。不用约会议：化身走进 2D 自习大厅，
+**Open Study Room** 是免费开源的虚拟自习室。不用约会议：化身走进 2D 自习大厅，
 silent 区强制静音（服务端执行）、discussion 区按距离衰减语音、
 坐下即进入专注。
 

@@ -1,9 +1,9 @@
 {
-  "name": "syncle-web",
+  "name": "open-study-room-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Syncle web client. Connects to the same LiveKit room + Syncle backend as the Android app.",
+  "description": "Open Study Room web client. Connects to the same LiveKit room + Open Study Room backend (server/).",
   "scripts": {
     "sync-assets": "node scripts/sync-assets.mjs",
     "predev": "npm run sync-assets",

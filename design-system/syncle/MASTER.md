@@ -6,7 +6,7 @@
 
 ---
 
-**Project:** Syncle
+**Project:** Open Study Room
 **Generated:** 2026-06-13 15:59:25
 **Category:** Spatial Computing OS / App
 

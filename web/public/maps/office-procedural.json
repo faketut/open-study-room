@@ -1,5 +1,5 @@
 {
-  "map_name": "Syncle Office (Showcase)",
+  "map_name": "Open Study Room (Showcase)",
   "width": 1000,
   "height": 800,
   "background_color": "#3a2a20",
@@ -44,7 +44,7 @@
     { "type": "cabinet", "sprite": "bookshelf", "x": 420, "y": 30, "width": 36, "height": 36 },
     { "type": "plant",   "sprite": "plant_leafy", "x": 30,  "y": 350, "width": 36, "height": 36 },
     { "type": "plant",   "sprite": "plant_red",   "x": 444, "y": 350, "width": 36, "height": 36 },
-    { "type": "board", "id": "board-prs", "label": "Team PRs", "repo": "faketut/Syncle",
+    { "type": "board", "id": "board-prs", "label": "Team PRs", "repo": "faketut/open-study-room",
       "x": 220, "y": 40, "width": 100, "height": 36 },
 
     { "type": "rug", "sprite": "rug_red_b", "x": 560, "y": 100, "width": 360, "height": 240 },
@@ -81,7 +81,7 @@
     { "type": "plant", "sprite": "plant_leafy", "x": 440, "y": 440, "width": 36, "height": 36 },
     { "type": "plant", "sprite": "plant_pink",  "x": 440, "y": 740, "width": 36, "height": 36 },
     { "type": "note", "label": "Welcome",
-      "text": "Welcome to Syncle! Use WASD to move, E to sit at a table, T to chat, R to react. Walk through doors to switch rooms.",
+      "text": "Welcome to Open Study Room! Use WASD to move, E to sit at a table, T to chat, R to react. Walk through doors to switch rooms.",
       "x": 380, "y": 460, "width": 60, "height": 30 },
 
     { "type": "cabinet", "sprite": "counter",      "x": 520, "y": 420, "width": 40, "height": 40 },

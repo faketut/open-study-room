@@ -1,4 +1,4 @@
-# Syncle backend
+# Open Study Room backend
 
 Node 20 + Fastify + LiveKit Server SDK + SQLite. Signs LiveKit JWTs bound to a
 persistent `userId` (derived from a client `deviceId`), and tracks per-room

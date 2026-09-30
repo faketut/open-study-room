@@ -1,11 +1,16 @@
-# Syncle shared contracts
+# Open Study Room shared contracts
+
+> **Changelog — 2026-09-29**: project renamed from **Syncle** to **Open Study Room**
+> (repo `faketut/Syncle` → `faketut/open-study-room`). Only user-facing names
+> changed; internal identifiers (file names, store/hook names, CSS classes,
+> storage keys) intentionally keep the old naming to avoid churn.
 
 Authoritative definitions for values that MUST be kept in sync between the
 **Web client** (`web/`) and the **Node backend** (`server/`). If you change
 one side, change the other in the same PR.
 
 > **Changelog — 2026-09-29**: the Kotlin Android client (`app/`) was removed.
-> Syncle is now web + server only. Mobile goes through phone browsers
+> Open Study Room is now web + server only. Mobile goes through phone browsers
 > (touch-friendly web client); a Capacitor shell around the web client remains
 > an option if native push / background audio is ever needed. Android-only
 > contract entries below were rewritten or dropped accordingly.
@@ -126,7 +131,7 @@ See [server/src/livekit.ts](../server/src/livekit.ts).
 
 ## Zones (M1: quiet semantics)
 
-Syncle is a **virtual study room**: the default assumption is quiet, not
+Open Study Room is a **virtual study room**: the default assumption is quiet, not
 "walk up and talk". Zones carry an acoustic policy (`kind`) that overrides
 the table conversation behavior. `meeting` semantics are folded into
 `discussion`; `restricted` is reserved for P1.

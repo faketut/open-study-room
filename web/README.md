@@ -1,7 +1,7 @@
-# Syncle Web
+# Open Study Room Web
 
 React + Vite + TypeScript client — the primary (and now only) client. Joins a
-LiveKit room and talks to the Syncle backend (`server/`); browser users on
+LiveKit room and talks to the Open Study Room backend (`server/`); browser users on
 desktop and phone appear as ordinary peers in the same spatial world.
 
 ## Scope (current)
