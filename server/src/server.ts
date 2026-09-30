@@ -9,6 +9,7 @@ import { registerSnapshotRoutes, FRESH_WINDOW_MS } from "./routes/snapshot.js";
 import { registerStateRoutes } from "./routes/state.js";
 import { registerChannelRoutes } from "./routes/channels.js";
 import { registerModerationRoutes } from "./routes/moderation.js";
+import { registerFocusRoutes } from "./routes/focus.js";
 
 export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
   const cfg = loadConfig(overrideEnv ?? process.env);
@@ -62,6 +63,11 @@ export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
       cfg.LIVEKIT_API_SECRET,
     ),
     freshWindowMs: FRESH_WINDOW_MS,
+  });
+  // M3 focus loop: pomodoro sessions + stats/streak.
+  await registerFocusRoutes(app, {
+    db,
+    apiSecret: cfg.LIVEKIT_API_SECRET,
   });
 
   app.addHook("onClose", async () => {

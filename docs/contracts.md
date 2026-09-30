@@ -569,3 +569,161 @@ mute compose by union and are lifted independently (§3a rules 1–6).
 Ban: absent by design. Wordlist: one source file, one build-time copy, one
 drift test. Block list: one localStorage key, three filter points, zero
 server knowledge.
+
+## Focus loop (M3: pomodoro + stats + sit ritual)
+
+The core retention loop of a study room: sit down → focus (pomodoro) →
+peers see "focusing 18:32" → stats/streak. **Server time is authoritative**
+for everything streak-related (clients can lie; the DB cannot).
+
+### 1. `focus_sessions` table (frozen)
+
+```sql
+CREATE TABLE IF NOT EXISTS focus_sessions (
+  id             TEXT PRIMARY KEY,   -- uuid
+  user_id        TEXT NOT NULL,
+  room           TEXT NOT NULL,
+  kind           TEXT NOT NULL CHECK (kind IN ('focus', 'break')),
+  planned_minutes INTEGER NOT NULL CHECK (planned_minutes BETWEEN 1 AND 180),
+  started_at     INTEGER NOT NULL,   -- epoch ms, server clock
+  ends_at        INTEGER NOT NULL,   -- started_at + planned_minutes * 60000, server clock
+  ended_at       INTEGER,            -- epoch ms, NULL while active
+  completed      INTEGER NOT NULL DEFAULT 0,  -- 1 only via the completion rule below
+  created_at     INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_focus_sessions_user_started
+  ON focus_sessions(user_id, started_at);
+```
+
+- **At most one active session per user** (`ended_at IS NULL`). Starting a
+  new session first settles any existing active one as interrupted
+  (`ended_at = now`, `completed = 0`).
+- **Completion rule (server-decided, normative):** on end, `completed = 1`
+  iff `ended_at >= ends_at - 60_000` (60 s grace for "finished a bit early").
+  Manual early end → `completed = 0`. The client's `completed` hint is
+  ignored; the server recomputes from its own clock.
+- **Lazy settle of abandoned sessions:** whenever the server reads a user's
+  active session (start / active / stats), it first settles any session with
+  `ends_at < now - 300_000` as `ended_at = ends_at, completed = 0`
+  (5 min grace covers reconnects and clock skew). No background job.
+- Only `kind = 'focus'` sessions count toward stats/streak. Breaks are
+  recorded for honesty but excluded from every aggregate.
+
+### 2. Pomodoro state machine (client)
+
+Phases: `idle → focusing → idle`, and `idle → on_break → idle`.
+`focusing` and `on_break` never transition into each other directly —
+finishing a focus session returns to `idle`; the client may auto-offer a
+break (UI choice, not a state transition).
+
+| Event | From | To | Side effects |
+|---|---|---|---|
+| `start(kind, minutes)` | `idle` | `focusing` / `on_break` | REST start; publish `focus` attribute; start local 1 s ticker |
+| `timer_reached_end` | `focusing` / `on_break` | `idle` | REST end; clear attribute; local notification |
+| `user_end_early` | `focusing` / `on_break` | `idle` | REST end (server marks `completed = 0`); clear attribute |
+| `stand_up` (table_id cleared) | `focusing` | `idle` | Same as `user_end_early` (interrupted) |
+| `disconnect` | any active | — | No client action; server lazy-settles (§1) |
+| `reconnect` | — | resume | `GET active` → if a session is still live, resume ticker from server `ends_at` |
+
+### 3. Focus presence attribute
+
+LiveKit participant attribute **`focus`** (new key; no conflict with M1's
+`status` / `zone_kind` / `table_id`):
+
+| Value | Meaning |
+|---|---|
+| `""` (empty / cleared) | idle — not focusing |
+| `focusing:<sec>` | focusing, `<sec>` = remaining seconds at publish time |
+| `break:<sec>` | on break, `<sec>` = remaining seconds at publish time |
+
+- The client publishes on start/end and on a **30 s heartbeat** while
+  active. Receivers tick the countdown down locally every second from the
+  last published value (no per-second broadcast).
+- Display: peers render `专注中 18:32` / `休息中 04:12` from
+  `parseFocusAttribute`.
+- `web/src/data/liveKitService.ts` gains `setFocusAttribute(room, value)`.
+- `avatarStatus.ts`: `StatusInputs` gains optional `focusing?: boolean`;
+  `deriveStatus` returns `"focus"` when `focusing` is true (checked after
+  `manualBusy`, before `meeting`) so an active pomodoro always shows the
+  focus pill even when the mic logic would say otherwise.
+
+### 4. REST endpoint shapes
+
+Common auth: `Authorization: Bearer <LiveKit JWT>` → `extractBearer` →
+`verifyJoinToken(apiSecret)` → `payload.sub` is the caller. For
+`/v1/rooms/:room/...`, `payload.video.room` must equal `:room` else
+`403 { error: "room_mismatch" }`. Rate limit: 30/min per caller (follows the
+moderation `moderate` default).
+
+#### `POST /v1/rooms/:room/focus/sessions` — start
+
+- Body: `{ "kind": "focus" | "break", "plannedMinutes": number }`
+  (`plannedMinutes` 1–180 else `400 { error: "invalid_body" }`).
+- Server: lazy-settles stale actives, inserts the row with server `now`,
+  returns `201 { "id", "kind", "plannedMinutes", "startedAt", "endsAt" }`.
+
+#### `POST /v1/rooms/:room/focus/sessions/:id/end` — end
+
+- Body: `{}` (empty; the server decides `completed` via §1).
+- Rules: unknown id → `404`; id belongs to another user → `403`;
+  already ended → `200` with the stored result (idempotent).
+- Success: `200 { "id", "completed": 0|1, "durationSec": number }`.
+
+#### `GET /v1/rooms/:room/focus/active` — resume on (re)join
+
+- Success: `200 { "session": null | { "id", "kind", "plannedMinutes", "startedAt", "endsAt" } }`.
+- The client calls this after LiveKit connect; a live session resumes the
+  local ticker and the `focus` attribute.
+
+#### `GET /v1/users/:userId/focus/stats?tzOffsetMin=<int>` — stats
+
+- Auth: bearer; `:userId` MUST equal the caller (`payload.sub`), else
+  `403 { error: "forbidden" }` (stats are private in M3).
+- `tzOffsetMin`: minutes east of UTC, e.g. Beijing `480`
+  (client sends `-new Date().getTimezoneOffset()`); defaults to `0`.
+  Day boundaries are computed as UTC midnight shifted by this offset.
+- Success: `200 { "todaySec", "weekSec", "streakDays",
+  "totalCompletedSessions", "last7Days": [{ "day": "YYYY-MM-DD", "seconds" }] }`
+  where `todaySec`/`weekSec`/`last7Days` sum **completed** focus sessions
+  only, and `day` strings are in the caller's tz.
+
+#### Streak rule (normative)
+
+- A calendar day (in the caller's tz) counts iff it contains ≥ 1 completed
+  focus session.
+- `streakDays` = number of consecutive counted days ending today; if today
+  is uncounted but yesterday is counted, the streak runs through yesterday
+  (standard grace — the streak is not yet broken).
+
+### 5. Sit ritual (T11)
+
+- Sitting down (`table_id` set, non-empty): the client shows a one-tap
+  **"开始专注"** entry (prompt/button near the HUD, touch-friendly per
+  MW1). **No auto-start** — the user taps to begin.
+- Standing up (`table_id` cleared) while `focusing`: the client ends the
+  session immediately (`completed = 0`, interrupted).
+- Leaving the room / closing the tab: best-effort `end` on `beforeunload`;
+  the server lazy-settle (§1) is the backstop.
+
+### 6. Notifications
+
+On `timer_reached_end` the client fires a local notification:
+`Notification` API when permission is granted (desktop + Android Chrome),
+always accompanied by an in-app toast/banner (covers iOS Safari and denied
+permission). No server push in M3.
+
+### Where it lives (M3 implementation targets)
+
+| Side | File | Symbol |
+|---|---|---|
+| Server | `server/src/db.ts` | `focus_sessions` schema + `startFocusSession` / `endFocusSession` / `getActiveFocusSession` / `settleStaleFocusSessions` / `getFocusStats` (+ `FocusSessionRow`) |
+| Server | `server/src/routes/focus.ts` | four endpoints above |
+| Server | `server/src/server.ts` | `registerFocusRoutes` |
+| Web | `web/src/domain/pomodoro.ts` | `PomodoroPhase`, `createPomodoro`, `parseFocusAttribute` / `serializeFocusAttribute`, `formatRemaining` |
+| Web | `web/src/data/focusApi.ts` | `startFocusSession` / `endFocusSession` / `getActiveFocusSession` / `getFocusStats` |
+| Web | `web/src/state/pomodoroStore.ts` | zustand store: phase, endsAt, 1 s ticker, attribute publish |
+| Web | `web/src/data/liveKitService.ts` | `setFocusAttribute` |
+| Web | `web/src/domain/avatarStatus.ts` | `StatusInputs.focusing` |
+| Web | `web/src/ui/FocusStatsPanel.tsx` | 今日/本周/连续 streak panel |
+| Web | `web/src/ui/SyncleScreen.tsx` | sit prompt wiring + stats entry point |

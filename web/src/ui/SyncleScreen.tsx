@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, type Participant } from "livekit-client";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff,
-  MessageSquare, StickyNote, X, Settings, Shield,
+  MessageSquare, StickyNote, X, Settings, Shield, Timer,
 } from "lucide-react";
 import { SpatialCanvas } from "./SpatialCanvas";
 import { TouchJoystick } from "./TouchJoystick";
@@ -76,6 +76,9 @@ import { ChatPanel } from "./ChatPanel";
 import { VideoTiles } from "./VideoTiles";
 import { WhosWherePanel } from "./WhosWherePanel";
 import { ModerationPanel } from "./ModerationPanel";
+import { FocusStatsPanel } from "./FocusStatsPanel";
+import { SitFocusPrompt } from "./SitFocusPrompt";
+import { usePomodoroStore } from "../state/pomodoroStore";
 import { MeetingView } from "./MeetingView";
 import { MiniPanel } from "./MiniPanel";
 import { BoardModal } from "./BoardModal";
@@ -151,6 +154,13 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   /** Set while a portal teleport is in flight so we don't fire concurrent
    *  map fetches. */
   const portalLoadingRef = useRef(false);
+  // M3: the connection controller swaps the Room object on reconnect (App
+  // handleConnected swaps it in); the pomodoro store reads the current
+  // Room through a getter, so mirror the prop into a ref.
+  const roomRef = useRef(room);
+  useEffect(() => {
+    roomRef.current = room;
+  }, [room]);
   /** ms epoch of the last portal teleport (or 0). Used with PORTAL_COOLDOWN_MS
    *  to keep the player from instantly bouncing back through the inverse
    *  portal on the destination side. */
@@ -329,6 +339,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // peer (re)join just like table_id.
   const selfStatus = useSyncle((s) => s.self?.status);
   const selfManualBusy = useSyncle((s) => s.self?.manualBusy ?? false);
+  // M3: pomodoro phase drives the `focusing` status input (T11).
+  const pomodoroPhase = usePomodoroStore((s) => s.phase);
+  const pomodoroKind = usePomodoroStore((s) => s.kind);
+  /** Set before a programmatic endEarly()/disconnect() so the resulting
+   *  non-idle → idle transition doesn't show the completion toast (§6). */
+  const suppressFocusToastRef = useRef(false);
+  /** M3 T10: in-app toast for the completion banner. */
+  const [focusToast, setFocusToast] = useState<{
+    title: string;
+    body: string;
+  } | null>(null);
   useEffect(() => {
     if (!self) return;
     const recompute = () => {
@@ -338,6 +359,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         muted: userMuted,
         idleMs,
         manualBusy: selfManualBusy,
+        focusing: pomodoroPhase !== "idle",
       });
       if (next !== selfStatus) {
         setSelfStatus(next);
@@ -357,7 +379,120 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     selfManualBusy,
     selfStatus,
     setSelfStatus,
+    pomodoroPhase,
   ]);
+
+  // M3 T11: standing up (table_id goes from non-empty to empty) while a
+  // focus session is active ends it immediately as interrupted
+  // (completed = 0, per the contract's stand_up row). Does not fire for
+  // on_break, which the user ends explicitly.
+  const prevTableIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevTableIdRef.current;
+    const cur = self?.tableId ?? null;
+    prevTableIdRef.current = cur;
+    if (prev != null && cur == null) {
+      const st = usePomodoroStore.getState();
+      if (st.phase === "focusing") {
+        suppressFocusToastRef.current = true;
+        void st.endEarly().catch((err) =>
+          console.warn("endEarly on stand-up failed", err),
+        );
+      }
+    }
+  }, [self?.tableId]);
+
+  // M3 §5: best-effort session end when the tab closes or the user leaves
+  // the room. navigator.sendBeacon can't do authenticated JSON REST, so a
+  // plain fetch is the best-effort fallback and failures are ignored; the
+  // server's lazy-settle of abandoned sessions (§1) is the real backstop.
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      try {
+        const st = usePomodoroStore.getState();
+        if (st.phase !== "idle") {
+          suppressFocusToastRef.current = true;
+          void st.endEarly().catch(() => {});
+        }
+      } catch {
+        /* best-effort only */
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
+  // M3: inject connection info into the pomodoro store. The store's actions
+  // no-op until connect() runs, so this is what makes SitFocusPrompt,
+  // the stand-up interrupt, and the beforeunload end actually reach the
+  // server. Values come from the same `cache` prop as reportState
+  // (ConnectCache: backendUrl, room, session.token, session.userId); the
+  // token and room go through getters because the ConnectionController
+  // mutates/refreshes them in place. resume() restores a live server
+  // session after (re)join (contract §2 reconnect row).
+  useEffect(() => {
+    if (
+      !cache?.backendUrl ||
+      !cache?.room ||
+      !cache?.session?.token ||
+      !cache?.session?.userId
+    ) {
+      return;
+    }
+    const st = usePomodoroStore.getState();
+    st.connect({
+      backendUrl: cache.backendUrl,
+      room: cache.room,
+      getToken: () => cache.session?.token ?? "",
+      userId: cache.session.userId,
+      getRoom: () => roomRef.current,
+    });
+    void st.resume().catch((err) => console.warn("pomodoro resume failed", err));
+    return () => {
+      // Leaving the room (or swapping Room on reconnect): the store's
+      // disconnect resets to idle without ending the session server-side
+      // (contract §2: server lazy-settles) — not a completion, no toast.
+      // Only arm the flag when a session is actually active, otherwise a
+      // stale flag would swallow a later real completion's toast.
+      const cur = usePomodoroStore.getState();
+      if (cur.phase !== "idle") suppressFocusToastRef.current = true;
+      cur.disconnect();
+    };
+  }, [room, cache]);
+
+  // M3 §6: in-app completion toast. The store fires the Notification API
+  // internally on natural timer end and ignores its result, so the UI
+  // always shows the toast alongside it — this covers iOS Safari and
+  // denied permission, where the Notification API can't fire. A
+  // non-idle → idle transition caused by our own endEarly()/disconnect()
+  // (stand-up, unload, reconnect swap) is suppressed via the flag above.
+  const prevPomodoroRef = useRef<{ phase: string; kind: string | null }>({
+    phase: "idle",
+    kind: null,
+  });
+  useEffect(() => {
+    const prev = prevPomodoroRef.current;
+    prevPomodoroRef.current = { phase: pomodoroPhase, kind: pomodoroKind };
+    if (prev.phase !== "idle" && pomodoroPhase === "idle") {
+      if (suppressFocusToastRef.current) {
+        suppressFocusToastRef.current = false;
+        return;
+      }
+      const wasBreak = prev.kind === "break";
+      setFocusToast(
+        wasBreak
+          ? { title: "休息结束", body: "休息时间到，回来继续专注吧" }
+          : { title: "专注完成", body: "本次专注完成，要不要休息一下？" },
+      );
+    }
+  }, [pomodoroPhase, pomodoroKind]);
+
+  // Auto-dismiss the completion toast.
+  useEffect(() => {
+    if (!focusToast) return;
+    const id = window.setTimeout(() => setFocusToast(null), 8000);
+    return () => window.clearTimeout(id);
+  }, [focusToast]);
 
   // M1: state-report heartbeat. Zone-crossing reports above are the
   // primary path, but a lost report (e.g. expired token at the crossing
@@ -410,6 +545,8 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // M2 moderation panel (host-only). Entry button renders only when
   // `self.role === "host"`.
   const [moderationOpen, setModerationOpen] = useState(false);
+  // M3 T10: focus stats panel. Opened from the HUD Timer button.
+  const [statsOpen, setStatsOpen] = useState(false);
   // M2: set by the kick_notice data packet (see JoinScreen). Disconnects
   // and routes back to JoinScreen, which shows the reason.
   const kicked = useSyncle((s) => s.kicked);
@@ -1175,6 +1312,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               <Shield size={14} aria-hidden="true" />
             </button>
           )}
+          {/* M3 T10: focus stats entry. */}
+          <button
+            type="button"
+            className="view-toggle"
+            onClick={() => setStatsOpen(true)}
+            title="专注统计 (focus stats)"
+            aria-label="专注统计"
+            aria-pressed={statsOpen}
+          >
+            <Timer size={14} aria-hidden="true" />
+          </button>
         </div>
         {perfOpen && (
           <div className="perf-panel" role="dialog" aria-label="Performance settings">
@@ -1296,6 +1444,9 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           onHoldStart={pttHoldStart}
           onHoldEnd={pttHoldEnd}
         />
+        {/* M3 T11: sit ritual. One-tap focus entry while seated and the
+            pomodoro is idle. Fixed-position card, touch-friendly buttons. */}
+        {seated && pomodoroPhase === "idle" && <SitFocusPrompt />}
       </div>
       <button
         type="button"
@@ -1515,7 +1666,44 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           onClose={() => setModerationOpen(false)}
         />
       )}
+      {/* M3 T10: focus stats. MobileDrawer turns it into a bottom sheet
+          (swipe-to-dismiss, scrim, ESC) on coarse pointers; on desktop the
+          drawer's CSS collapses to display:contents and the .focus-stats
+          card is a centered modal via its own fixed positioning. */}
+      {statsOpen && (
+        <MobileDrawer
+          open={statsOpen}
+          onClose={() => setStatsOpen(false)}
+          side="bottom"
+          title="专注统计"
+        >
+          <FocusStatsPanel
+            backendUrl={cache?.backendUrl ?? ""}
+            userId={cache?.session?.userId ?? ""}
+            getToken={() => cache?.session.token ?? ""}
+            onClose={() => setStatsOpen(false)}
+          />
+        </MobileDrawer>
+      )}
       <ReconnectOverlay onRetry={onRetryReconnect} />
+      {/* M3 §6: in-app completion toast (always shown alongside the
+          Notification API fire; the fallback for iOS/denied). */}
+      {focusToast && (
+        <div className="focus-toast" role="status" aria-live="polite">
+          <div className="focus-toast-text">
+            <div className="focus-toast-title">{focusToast.title}</div>
+            <div className="focus-toast-body">{focusToast.body}</div>
+          </div>
+          <button
+            type="button"
+            className="focus-toast-close"
+            onClick={() => setFocusToast(null)}
+            aria-label="关闭通知"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }

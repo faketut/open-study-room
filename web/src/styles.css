@@ -2824,3 +2824,296 @@ button.whos-where-avatar {
   background: rgba(255, 204, 0, 0.08);
   border-top: 1px solid rgba(255, 204, 0, 0.25);
 }
+
+/* ================= M3 focus stats + sit ritual ================= */
+
+/* M3 T10: focus stats panel. On fine pointers it's a centered modal card
+ * (MobileDrawer's CSS collapses to display:contents on desktop, so the
+ * card's own fixed positioning takes over). On coarse pointers it becomes
+ * plain drawer content — the drawer supplies scrim, grab handle, header
+ * with title/close, swipe-to-dismiss and ESC. */
+.focus-stats {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 300;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(80vh, 600px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3);
+  color: var(--fg);
+}
+.focus-stats-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.focus-stats-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+}
+.focus-stats-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+}
+.focus-stats-close:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}
+.focus-stats-body {
+  padding: 16px;
+}
+.focus-stats-loading,
+.focus-stats-error {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+.focus-stats-error {
+  color: var(--danger);
+}
+.focus-stats-retry {
+  display: block;
+  margin: 8px auto 0;
+  padding: 8px 20px;
+  min-height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: var(--bg-3);
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.focus-stats-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.focus-stats-tile {
+  background: var(--bg-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: 12px 8px;
+  text-align: center;
+}
+.focus-stats-tile-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--warning);
+  white-space: nowrap;
+}
+.focus-stats-tile-unit {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--fg-muted);
+  margin-left: 2px;
+}
+.focus-stats-tile-label {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.focus-stats-total {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  text-align: center;
+}
+.focus-stats-chart-title {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg-muted);
+}
+.focus-stats-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 120px;
+}
+.focus-stats-bar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.focus-stats-bar-track {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  background: var(--bg-1);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.focus-stats-bar-fill {
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent);
+  border-radius: var(--r-sm);
+}
+.focus-stats-bar.today .focus-stats-bar-fill {
+  background: var(--warning);
+}
+.focus-stats-bar-label {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* M3 T11: sit ritual prompt. Fixed card above the touch action area;
+ * visible on both desktop and touch while seated with an idle pomodoro. */
+.sit-focus-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: calc(140px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-2);
+  color: var(--fg);
+  max-width: calc(100vw - 32px);
+}
+.sit-focus-prompt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-align: center;
+  white-space: nowrap;
+}
+.sit-focus-prompt-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.sit-focus-btn {
+  min-width: 88px;
+  min-height: 56px;
+  padding: 0 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 600;
+  touch-action: manipulation;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sit-focus-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.sit-focus-btn.primary:active {
+  background: var(--accent-hover);
+}
+.sit-focus-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.sit-focus-error {
+  font-size: 12px;
+  color: var(--danger);
+  text-align: center;
+  max-width: 280px;
+}
+
+@media (pointer: coarse) {
+  /* Inside MobileDrawer's bottom sheet: flow as plain content, the
+   * drawer header already shows the title and close button. */
+  .focus-stats {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+  .focus-stats-close {
+    display: none;
+  }
+  .focus-stats-body {
+    padding: 4px 4px 12px;
+  }
+}
+
+/* M3 §6: focus completion in-app toast. Fixed top-center card; always
+ * shown alongside the Notification API fire (the fallback path for iOS
+ * Safari and denied permission). */
+.focus-toast {
+  position: fixed;
+  top: calc(64px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--warning);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3);
+  color: var(--fg);
+}
+.focus-toast-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.focus-toast-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--warning);
+  white-space: nowrap;
+}
+.focus-toast-body {
+  font-size: 13px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.focus-toast-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  touch-action: manipulation;
+}
+.focus-toast-close:hover {
+  color: var(--fg);
+  background: var(--bg-3);
+}

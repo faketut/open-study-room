@@ -64,6 +64,52 @@ describe("deriveStatus", () => {
       }),
     ).toBe("meeting");
   });
+
+  // M3 focus loop: an active pomodoro overrides the seated/mute derivation.
+  it("returns focus when focusing, even if the mic logic says meeting", () => {
+    expect(
+      deriveStatus({
+        seated: true,
+        muted: false,
+        idleMs: 0,
+        manualBusy: false,
+        focusing: true,
+      }),
+    ).toBe("focus");
+  });
+
+  it("returns focus when focusing while standing or idle", () => {
+    expect(
+      deriveStatus({
+        seated: false,
+        muted: true,
+        idleMs: 0,
+        manualBusy: false,
+        focusing: true,
+      }),
+    ).toBe("focus");
+    expect(
+      deriveStatus({
+        seated: false,
+        muted: false,
+        idleMs: IDLE_AWAY_MS * 2,
+        manualBusy: false,
+        focusing: true,
+      }),
+    ).toBe("focus");
+  });
+
+  it("manualBusy still wins over an active pomodoro", () => {
+    expect(
+      deriveStatus({
+        seated: true,
+        muted: false,
+        idleMs: 0,
+        manualBusy: true,
+        focusing: true,
+      }),
+    ).toBe("busy");
+  });
 });
 
 describe("isAvatarStatus", () => {

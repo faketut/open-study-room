@@ -33,13 +33,19 @@ export interface StatusInputs {
    *  over auto-derivation so people can opt-out of being marked as available
    *  when their cam is idle but they're heads-down. */
   manualBusy: boolean;
+  /** M3: a pomodoro focus session is active. Takes precedence over the
+   *  seated meeting/mute derivation so an active session always shows the
+   *  focus pill, even when the mic logic would say otherwise. */
+  focusing?: boolean;
 }
 
 /** Derive the status the local user should currently broadcast. Order matters:
- *  manual Busy is always honored; otherwise meeting > focus > away > available.
+ *  manual Busy is always honored; then an active pomodoro forces focus;
+ *  otherwise meeting > focus > away > available.
  *  Pure function for test-ability. */
 export function deriveStatus(inputs: StatusInputs): AvatarStatus {
   if (inputs.manualBusy) return "busy";
+  if (inputs.focusing) return "focus";
   if (inputs.seated) {
     return inputs.muted ? "focus" : "meeting";
   }

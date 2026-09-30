@@ -116,6 +116,23 @@ function migrate(db: Db): void {
       FOREIGN KEY (user_id)   REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (kicked_by) REFERENCES users(id) ON DELETE CASCADE
     );
+    -- M3 focus loop (docs/contracts.md "Focus loop (M3)").
+    -- Table/column names are frozen by the contract; do not rename.
+    CREATE TABLE IF NOT EXISTS focus_sessions (
+      id             TEXT PRIMARY KEY,   -- uuid
+      user_id        TEXT NOT NULL,
+      room           TEXT NOT NULL,
+      kind           TEXT NOT NULL CHECK (kind IN ('focus', 'break')),
+      planned_minutes INTEGER NOT NULL CHECK (planned_minutes BETWEEN 1 AND 180),
+      started_at     INTEGER NOT NULL,   -- epoch ms, server clock
+      ends_at        INTEGER NOT NULL,   -- started_at + planned_minutes * 60000, server clock
+      ended_at       INTEGER,            -- epoch ms, NULL while active
+      completed      INTEGER NOT NULL DEFAULT 0,  -- 1 only via the completion rule below
+      created_at     INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_focus_sessions_user_started
+      ON focus_sessions(user_id, started_at);
   `);
   ensureRoomStateZoneColumns(db);
 }
@@ -603,4 +620,254 @@ export function upsertChannel(
     "INSERT INTO channels (id, room, name, created_at) VALUES (?, ?, ?, ?)",
   ).run(row.id, row.room, row.name, row.created_at);
   return row;
+}
+
+// ---------- Focus sessions (M3 focus loop) ----------
+// Contract: docs/contracts.md "Focus loop (M3)" §1. Server time is
+// authoritative for everything completion/streak-related.
+
+export type FocusSessionKind = "focus" | "break";
+
+export interface FocusSessionRow {
+  id: string;
+  user_id: string;
+  room: string;
+  kind: FocusSessionKind;
+  planned_minutes: number;
+  started_at: number;
+  ends_at: number;
+  ended_at: number | null;
+  completed: number; // 0 | 1 — server-decided via the completion rule
+  created_at: number;
+}
+
+export class FocusSessionNotFoundError extends Error {
+  constructor(id: string) {
+    super(`focus session not found: ${id}`);
+    this.name = "FocusSessionNotFoundError";
+  }
+}
+
+export class FocusSessionForbiddenError extends Error {
+  constructor(id: string) {
+    super(`focus session belongs to another user: ${id}`);
+    this.name = "FocusSessionForbiddenError";
+  }
+}
+
+/** Abandoned-session grace: sessions past their end are only settled once
+ *  `ends_at < now - FOCUS_STALE_MS` (covers reconnects and clock skew). */
+const FOCUS_STALE_MS = 300_000;
+/** "Finished a bit early" grace: completed = 1 iff ended_at >= ends_at - 60 s. */
+const FOCUS_GRACE_MS = 60_000;
+const DAY_MS = 86_400_000;
+
+/** Lazy settle of abandoned sessions (contract §1): every still-active
+ *  session of this user with `ends_at < now - 300_000` is closed as
+ *  `ended_at = ends_at, completed = 0`. No background job — callers settle
+ *  before reading (start / active / stats). Returns the number settled. */
+export function settleStaleFocusSessions(
+  db: Db,
+  userId: string,
+  now: number,
+): number {
+  const res = db
+    .prepare(
+      `UPDATE focus_sessions
+         SET ended_at = ends_at, completed = 0
+       WHERE user_id = ? AND ended_at IS NULL AND ends_at < ?`,
+    )
+    .run(userId, now - FOCUS_STALE_MS);
+  return Number(res.changes);
+}
+
+export interface StartFocusSessionParams {
+  userId: string;
+  room: string;
+  kind: FocusSessionKind;
+  plannedMinutes: number;
+  now: number;
+}
+
+/** Start a session. First lazy-settles stale actives, then interrupts any
+ *  remaining active session of this user (`ended_at = now, completed = 0`
+ *  — at most one active per user), then inserts the new row. */
+export function startFocusSession(
+  db: Db,
+  params: StartFocusSessionParams,
+): FocusSessionRow {
+  const { userId, room, kind, plannedMinutes, now } = params;
+  settleStaleFocusSessions(db, userId, now);
+  db.prepare(
+    `UPDATE focus_sessions
+       SET ended_at = ?, completed = 0
+     WHERE user_id = ? AND ended_at IS NULL`,
+  ).run(now, userId);
+  const row: FocusSessionRow = {
+    id: randomUUID(),
+    user_id: userId,
+    room,
+    kind,
+    planned_minutes: plannedMinutes,
+    started_at: now,
+    ends_at: now + plannedMinutes * 60_000,
+    ended_at: null,
+    completed: 0,
+    created_at: now,
+  };
+  db.prepare(
+    `INSERT INTO focus_sessions
+       (id, user_id, room, kind, planned_minutes, started_at, ends_at, ended_at, completed, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.id,
+    row.user_id,
+    row.room,
+    row.kind,
+    row.planned_minutes,
+    row.started_at,
+    row.ends_at,
+    row.ended_at,
+    row.completed,
+    row.created_at,
+  );
+  return row;
+}
+
+export function getFocusSession(
+  db: Db,
+  id: string,
+): FocusSessionRow | undefined {
+  return db
+    .prepare<[string], FocusSessionRow>(
+      "SELECT * FROM focus_sessions WHERE id = ?",
+    )
+    .get(id);
+}
+
+/** End a session. Idempotent: an already-ended session returns its stored
+ *  result. The completion rule is server-decided — `completed = 1` iff
+ *  `ended_at (= now) >= ends_at - 60_000`; any client hint is ignored.
+ *  Throws FocusSessionNotFoundError / FocusSessionForbiddenError (the route
+ *  maps these to 404 / 403). */
+export function endFocusSession(
+  db: Db,
+  id: string,
+  userId: string,
+  now: number,
+): FocusSessionRow {
+  const existing = getFocusSession(db, id);
+  if (!existing) throw new FocusSessionNotFoundError(id);
+  if (existing.user_id !== userId) throw new FocusSessionForbiddenError(id);
+  if (existing.ended_at !== null) return existing; // idempotent
+  const completed = now >= existing.ends_at - FOCUS_GRACE_MS ? 1 : 0;
+  db.prepare(
+    `UPDATE focus_sessions
+       SET ended_at = ?, completed = ?
+     WHERE id = ? AND ended_at IS NULL`,
+  ).run(now, completed, id);
+  const updated = getFocusSession(db, id);
+  if (!updated) throw new FocusSessionNotFoundError(id); // unreachable
+  return updated;
+}
+
+/** The user's currently active session, if any. Lazy-settles stale actives
+ *  first (contract §1), so a returned row is genuinely live. */
+export function getActiveFocusSession(
+  db: Db,
+  userId: string,
+  now: number,
+): FocusSessionRow | null {
+  settleStaleFocusSessions(db, userId, now);
+  const row = db
+    .prepare<[string], FocusSessionRow>(
+      `SELECT * FROM focus_sessions
+       WHERE user_id = ? AND ended_at IS NULL
+       ORDER BY started_at DESC
+       LIMIT 1`,
+    )
+    .get(userId);
+  return row ?? null;
+}
+
+export interface FocusDayStat {
+  /** Calendar day in the caller's tz, YYYY-MM-DD. */
+  day: string;
+  seconds: number;
+}
+
+export interface FocusStats {
+  todaySec: number;
+  /** Rolling 7-day window ending today (same days as last7Days). */
+  weekSec: number;
+  streakDays: number;
+  totalCompletedSessions: number;
+  last7Days: FocusDayStat[];
+}
+
+/** Local day index for an instant: floor((ts + tzOffsetMs) / DAY_MS), where
+ *  tzOffsetMin is minutes east of UTC (client sends
+ *  `-new Date().getTimezoneOffset()`). */
+function tzDayIndex(ts: number, tzOffsetMin: number): number {
+  return Math.floor((ts + tzOffsetMin * 60_000) / DAY_MS);
+}
+
+/** YYYY-MM-DD label of a local day index: the UTC instant
+ *  dayIndex * DAY_MS is exactly local midnight, so its ISO date is the
+ *  caller's calendar date. */
+function tzDayLabel(dayIndex: number): string {
+  return new Date(dayIndex * DAY_MS).toISOString().slice(0, 10);
+}
+
+/** Stats/streak over **completed focus sessions only** (kind = 'focus',
+ *  completed = 1; breaks are recorded but excluded). A session is attributed
+ *  to the caller's local day of its `started_at`. Streak: consecutive counted
+ *  days ending today, with the standard one-day grace (today uncounted but
+ *  yesterday counted → the streak runs through yesterday). */
+export function getFocusStats(
+  db: Db,
+  userId: string,
+  tzOffsetMin: number,
+  now: number,
+): FocusStats {
+  settleStaleFocusSessions(db, userId, now);
+  const rows = db
+    .prepare<[string], Pick<FocusSessionRow, "started_at" | "ended_at">>(
+      `SELECT started_at, ended_at FROM focus_sessions
+       WHERE user_id = ? AND kind = 'focus' AND completed = 1`,
+    )
+    .all(userId);
+
+  const perDay = new Map<number, number>(); // local dayIndex -> seconds
+  for (const r of rows) {
+    const secs = Math.floor(((r.ended_at ?? r.started_at) - r.started_at) / 1000);
+    if (secs <= 0) continue;
+    const d = tzDayIndex(r.started_at, tzOffsetMin);
+    perDay.set(d, (perDay.get(d) ?? 0) + secs);
+  }
+
+  const todayIdx = tzDayIndex(now, tzOffsetMin);
+  const last7Days: FocusDayStat[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = todayIdx - i;
+    last7Days.push({ day: tzDayLabel(d), seconds: perDay.get(d) ?? 0 });
+  }
+  const todaySec = perDay.get(todayIdx) ?? 0;
+  const weekSec = last7Days.reduce((sum, x) => sum + x.seconds, 0);
+
+  let d = todayIdx;
+  if (!perDay.has(d)) d -= 1; // grace: streak runs through yesterday
+  let streakDays = 0;
+  while (perDay.has(d)) {
+    streakDays += 1;
+    d -= 1;
+  }
+
+  return {
+    todaySec,
+    weekSec,
+    streakDays,
+    totalCompletedSessions: rows.length,
+    last7Days,
+  };
 }

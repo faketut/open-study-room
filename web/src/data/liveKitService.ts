@@ -6,6 +6,7 @@ import {
   type Participant,
   DataPacket_Kind,
 } from "livekit-client";
+import { FOCUS_ATTRIBUTE_KEY } from "../domain/pomodoro";
 
 export interface LiveKitConnection {
   room: Room;
@@ -312,4 +313,22 @@ export function attenuationFor(distPx: number): number {
   if (v <= 0) return 0;
   if (v >= 1) return 1;
   return v;
+}
+
+/** Publish the local participant's pomodoro focus state as a LiveKit
+ *  attribute (`focus`). Key is verbatim per docs/contracts.md
+ *  "Focus loop (M3: pomodoro + stats + sit ritual)" §3 — the client MUST
+ *  use `FOCUS_ATTRIBUTE_KEY` (`"focus"`):
+ *  - `focusing:<sec>` — focusing, `<sec>` = remaining seconds at publish
+ *  - `break:<sec>` — on break, `<sec>` = remaining seconds at publish
+ *  - `""` (empty) — idle / cleared
+ *  Call on start/end and on the 30 s heartbeat while active (see
+ *  web/src/state/pomodoroStore.ts); receivers tick the countdown down
+ *  locally every second from the last published value. Same throw-style
+ *  as `setZoneAttributes` (callers that must not break the timer catch). */
+export async function setFocusAttribute(
+  room: Room,
+  value: string,
+): Promise<void> {
+  await room.localParticipant.setAttributes({ [FOCUS_ATTRIBUTE_KEY]: value });
 }
