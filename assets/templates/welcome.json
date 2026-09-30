@@ -1,0 +1,500 @@
+{
+  "template": {
+    "id": "welcome",
+    "name": {
+      "en": "Welcome Hall",
+      "zh": "开学迎新"
+    },
+    "description": {
+      "en": "An open welcome hall with a ring of chat tables, a central info desk, and a quiet corner.",
+      "zh": "开放式迎新大厅：环形交流桌、中央咨询台与一处安静角，轻松开场。"
+    }
+  },
+  "map_name": "开学迎新",
+  "width": 1400,
+  "height": 1000,
+  "background_color": "#2e3440",
+  "objects": [
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 0,
+      "width": 1400,
+      "height": 24
+    },
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 24,
+      "width": 24,
+      "height": 976
+    },
+    {
+      "type": "wall",
+      "x": 1376,
+      "y": 24,
+      "width": 24,
+      "height": 976
+    },
+    {
+      "type": "wall",
+      "x": 24,
+      "y": 976,
+      "width": 596,
+      "height": 24
+    },
+    {
+      "type": "wall",
+      "x": 780,
+      "y": 976,
+      "width": 596,
+      "height": 24
+    },
+    {
+      "type": "door",
+      "x": 620,
+      "y": 976,
+      "width": 160,
+      "height": 24,
+      "label": "正门"
+    },
+    {
+      "type": "zone",
+      "id": "zone-ring",
+      "label": "迎新交流环",
+      "kind": "discussion",
+      "x": 0,
+      "y": 0,
+      "width": 1400,
+      "height": 280
+    },
+    {
+      "type": "zone",
+      "id": "zone-lobby",
+      "label": "迎新大厅",
+      "kind": "rest",
+      "x": 0,
+      "y": 280,
+      "width": 1000,
+      "height": 720
+    },
+    {
+      "type": "zone",
+      "id": "zone-quiet",
+      "label": "安静角",
+      "kind": "silent",
+      "x": 1000,
+      "y": 280,
+      "width": 400,
+      "height": 720
+    },
+    {
+      "type": "rug",
+      "x": 480,
+      "y": 360,
+      "width": 440,
+      "height": 320,
+      "color": "#39415c"
+    },
+    {
+      "type": "cabinet",
+      "x": 620,
+      "y": 470,
+      "width": 160,
+      "height": 96,
+      "label": "新生咨询台",
+      "sprite": "counter"
+    },
+    {
+      "type": "note",
+      "x": 800,
+      "y": 480,
+      "width": 170,
+      "height": 110,
+      "label": "新生指南",
+      "text": "欢迎来到 Open Study Room！迎新活动日程见公告板，安静角在右上角，祝开学愉快～",
+      "color": "#f5e9c8"
+    },
+    {
+      "type": "board",
+      "x": 380,
+      "y": 300,
+      "width": 200,
+      "height": 110,
+      "label": "迎新活动日程",
+      "color": "#4a5a7a"
+    },
+    {
+      "type": "rug",
+      "x": 150,
+      "y": 60,
+      "width": 220,
+      "height": 160,
+      "color": "#333a52"
+    },
+    {
+      "type": "table",
+      "id": "table-w1",
+      "label": "迎新桌1",
+      "x": 180,
+      "y": 90,
+      "width": 160,
+      "height": 96,
+      "sprite": "wood_table"
+    },
+    {
+      "type": "chair",
+      "x": 145,
+      "y": 100,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 345,
+      "y": 100,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 240,
+      "y": 190,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "rug",
+      "x": 590,
+      "y": 60,
+      "width": 220,
+      "height": 160,
+      "color": "#333a52"
+    },
+    {
+      "type": "table",
+      "id": "table-w2",
+      "label": "迎新桌2",
+      "x": 620,
+      "y": 90,
+      "width": 160,
+      "height": 96,
+      "sprite": "wood_table"
+    },
+    {
+      "type": "chair",
+      "x": 585,
+      "y": 100,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 785,
+      "y": 100,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 680,
+      "y": 190,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "rug",
+      "x": 1030,
+      "y": 60,
+      "width": 220,
+      "height": 160,
+      "color": "#333a52"
+    },
+    {
+      "type": "table",
+      "id": "table-w3",
+      "label": "迎新桌3",
+      "x": 1060,
+      "y": 90,
+      "width": 160,
+      "height": 96,
+      "sprite": "wood_table"
+    },
+    {
+      "type": "chair",
+      "x": 1025,
+      "y": 100,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 1225,
+      "y": 100,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 1120,
+      "y": 190,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "rug",
+      "x": 210,
+      "y": 670,
+      "width": 220,
+      "height": 160,
+      "color": "#333a52"
+    },
+    {
+      "type": "table",
+      "id": "table-w4",
+      "label": "迎新桌4",
+      "x": 240,
+      "y": 700,
+      "width": 160,
+      "height": 96,
+      "sprite": "wood_table"
+    },
+    {
+      "type": "chair",
+      "x": 205,
+      "y": 710,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 405,
+      "y": 710,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 300,
+      "y": 800,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "rug",
+      "x": 530,
+      "y": 670,
+      "width": 220,
+      "height": 160,
+      "color": "#333a52"
+    },
+    {
+      "type": "table",
+      "id": "table-w5",
+      "label": "迎新桌5",
+      "x": 560,
+      "y": 700,
+      "width": 160,
+      "height": 96,
+      "sprite": "wood_table"
+    },
+    {
+      "type": "chair",
+      "x": 525,
+      "y": 710,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 725,
+      "y": 710,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "chair",
+      "x": 620,
+      "y": 800,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "desk",
+      "id": "desk-w01",
+      "label": "W1",
+      "x": 1060,
+      "y": 340,
+      "width": 96,
+      "height": 64,
+      "sprite": "side_table"
+    },
+    {
+      "type": "chair",
+      "x": 1088,
+      "y": 410,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "desk",
+      "id": "desk-w02",
+      "label": "W2",
+      "x": 1206,
+      "y": 340,
+      "width": 96,
+      "height": 64,
+      "sprite": "side_table"
+    },
+    {
+      "type": "chair",
+      "x": 1234,
+      "y": 410,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "desk",
+      "id": "desk-w03",
+      "label": "W3",
+      "x": 1060,
+      "y": 480,
+      "width": 96,
+      "height": 64,
+      "sprite": "side_table"
+    },
+    {
+      "type": "chair",
+      "x": 1088,
+      "y": 550,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "desk",
+      "id": "desk-w04",
+      "label": "W4",
+      "x": 1206,
+      "y": 480,
+      "width": 96,
+      "height": 64,
+      "sprite": "side_table"
+    },
+    {
+      "type": "chair",
+      "x": 1234,
+      "y": 550,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "desk",
+      "id": "desk-w05",
+      "label": "W5",
+      "x": 1060,
+      "y": 620,
+      "width": 96,
+      "height": 64,
+      "sprite": "side_table"
+    },
+    {
+      "type": "chair",
+      "x": 1088,
+      "y": 690,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "desk",
+      "id": "desk-w06",
+      "label": "W6",
+      "x": 1206,
+      "y": 620,
+      "width": 96,
+      "height": 64,
+      "sprite": "side_table"
+    },
+    {
+      "type": "chair",
+      "x": 1234,
+      "y": 690,
+      "width": 40,
+      "height": 40,
+      "sprite": "stool"
+    },
+    {
+      "type": "rug",
+      "x": 1030,
+      "y": 300,
+      "width": 320,
+      "height": 440,
+      "color": "#2e3550"
+    },
+    {
+      "type": "plant",
+      "x": 40,
+      "y": 40,
+      "width": 48,
+      "height": 48,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "plant",
+      "x": 1312,
+      "y": 40,
+      "width": 48,
+      "height": 48,
+      "sprite": "plant_leafy"
+    },
+    {
+      "type": "plant",
+      "x": 40,
+      "y": 912,
+      "width": 48,
+      "height": 48,
+      "sprite": "plant_leafy"
+    },
+    {
+      "type": "plant",
+      "x": 1312,
+      "y": 912,
+      "width": 48,
+      "height": 48,
+      "sprite": "plant_red"
+    }
+  ],
+  "spawn_points": [
+    {
+      "x": 700,
+      "y": 930
+    },
+    {
+      "x": 400,
+      "y": 900
+    },
+    {
+      "x": 1050,
+      "y": 900
+    }
+  ]
+}

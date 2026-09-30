@@ -778,3 +778,169 @@ permission). No server push in M3.
 | Web | `web/src/domain/avatarStatus.ts` | `StatusInputs.focusing` |
 | Web | `web/src/ui/FocusStatsPanel.tsx` | 今日/本周/连续 streak panel |
 | Web | `web/src/ui/SyncleScreen.tsx` | sit prompt wiring + stats entry point |
+
+## Map templates (P1-A: official template pack)
+
+A curated set of ready-to-use study-room maps. Users pick one on the
+JoinScreen; template authors add new ones by dropping a JSON file. P1-A
+freezes the **file format, metadata schema, selection flow, and quality
+gates** below. Building the actual template files and the JoinScreen
+picker UI is follow-up work by template-author workers — this section is
+the contract they build against.
+
+### 1. Format decision (frozen)
+
+Templates reuse the **objects-style procedural JSON** already consumed by
+`loadMapConfig` (`web/src/domain/mapConfig.ts`, style (B) in
+`web/src/types/mapConfig.ts`). Rationale: no new parser, no new renderer
+path, and the existing `MapObjectType` / `SOLID_TYPES` / zone-kind
+machinery applies unchanged.
+
+**No Tiled / WAM compatibility.** Templates are hand-authored in our own
+schema. We do not parse Tiled exports (`.tmx` / Tiled JSON) or
+WorkAdventure WAM files, and P1 adds no converter. A template file that
+is not valid per §2–§3 is rejected by the validator (§5).
+
+A template file is a single JSON object: **RawMapConfig-shaped, plus two
+top-level additions** — a `template` metadata block and a `spawn_points`
+array. Because the additions are unknown keys to `loadMapConfig`, the
+existing loader works on template URLs unchanged.
+
+```jsonc
+{
+  // --- (a) template metadata (required) ---
+  "template": {
+    "id": "library",
+    "name": { "en": "Library", "zh": "图书馆" },
+    "description": {
+      "en": "A quiet reading hall with long shared desks.",
+      "zh": "安静的阅读大厅，长条共享书桌。"
+    },
+    "thumbnail": "thumbnails/library.png"   // optional, see §2
+  },
+
+  // --- (b) map body: RawMapConfig procedural subset (required) ---
+  "map_name": "Library",
+  "width": 1000,
+  "height": 800,
+  "background_color": "#2b2f3a",
+  // ...or "background_image": "library.jpg" (procedural preferred)
+
+  "objects": [
+    { "type": "zone", "id": "zone-reading", "label": "Reading Hall",
+      "kind": "silent", "x": 40, "y": 40, "width": 920, "height": 560 },
+    { "type": "zone", "id": "zone-lounge", "label": "Lounge",
+      "kind": "rest", "x": 40, "y": 620, "width": 920, "height": 140 },
+    { "type": "wall", "x": 0, "y": 0, "width": 1000, "height": 24 },
+    { "type": "table", "id": "table-a1", "label": "A1",
+      "x": 120, "y": 120, "width": 160, "height": 80 },
+    { "type": "plant", "x": 60, "y": 60, "width": 36, "height": 36 },
+    { "type": "rug", "x": 80, "y": 80, "width": 840, "height": 480,
+      "color": "#35324a" }
+  ],
+
+  // --- (c) spawn points (required, ≥1) ---
+  "spawn_points": [{ "x": 500, "y": 740 }]
+}
+```
+
+### 2. Metadata (`template` block)
+
+| Field | Type | Required | Rule |
+|---|---|---|---|
+| `id` | string | yes | kebab-case: `^[a-z0-9]+(-[a-z0-9]+)*$`. MUST equal the file name (`<id>.json`). |
+| `name` | `{ en: string, zh: string }` | yes | Bilingual display name; both strings non-empty. |
+| `description` | `{ en: string, zh: string }` | yes | One sentence per language; both non-empty. Shown on the picker card. |
+| `thumbnail` | string | no | Relative path **inside** `/templates/` (e.g. `thumbnails/library.png`). When **missing**, the picker renders a placeholder color block (hue derived from the id), **never** a broken `<img>`. Absolute URLs are a validator warning (§5). |
+
+### 3. Map body (procedural subset)
+
+Minimal field table for template authors:
+
+| Field | Required | Notes |
+|---|---|---|
+| `map_name` | yes | Non-empty; display fallback. |
+| `width`, `height` | yes | Numbers, finite, > 0 (world px). |
+| `background_color` | yes, unless `background_image` | CSS color string, non-empty. At least one of the two MUST be present. |
+| `background_image` | no | Painted-bitmap alternative; templates SHOULD prefer procedural (no image) so they render with zero assets. |
+| `objects` | yes | Typed entities, see below. |
+| `spawn_points` | yes | Array of `{ x, y }`, length ≥ 1. |
+
+Object rules for templates:
+
+- `type` MUST be one of the frozen `MapObjectType` union (`wall`,
+  `table`, `desk`, `plant`, `cabinet`, `chair`, `door`, `rug`, `note`,
+  `zone`, `portal`, `board`). Unknown types are a validation error.
+- `zone` objects MUST carry an explicit `kind` of `silent`,
+  `discussion`, or `rest`. **Templates do not inherit the legacy
+  kind-missing default** (contracts.md "Zones (M1)" normalizes missing
+  kinds to `discussion` for old maps); a template zone without a valid
+  `kind` fails validation. `none` is never authored.
+- `table` / `desk` objects MUST carry a unique non-empty `id`
+  (table-join key; `loadMapConfig` drops id-less object tables).
+- Any object MAY set `sprite` (key into `ui/spriteAtlas.ts` `SPRITES`).
+  The validator cannot check catalog membership from JSON, so it emits a
+  **warning** reminding the author to verify the key exists.
+- Solid types blocking movement are exactly `SOLID_TYPES`
+  (`wall`, `table`, `desk`, `plant`, `cabinet`) — same set the renderer
+  and `isWalkable` use.
+- Legacy fields (`walkable_areas`, top-level `tables`,
+  `collision_settings`) are ignored for templates; authors use
+  `objects` + `spawn_points`.
+
+### 4. Selection flow (frozen)
+
+1. **Authoring location (source of truth):** `assets/templates/<id>.json`
+   (+ optional `assets/templates/thumbnails/`). `web/scripts/sync-assets.mjs`
+   copies `assets/templates/` → `web/public/templates/` on `predev` /
+   `prebuild`, so dev and build serve identical files at
+   `/templates/<id>.json`. **If `assets/templates/` does not exist the
+   script skips it without error** (template-author workers create the
+   directory later).
+2. **Registry:** `assets/templates/registry.json` (hand-maintained by
+   template authors, synced to `/templates/registry.json`):
+   `{ "templates": [{ "id", "name", "description", "thumbnail?", "url" }] }`
+   with `url` frozen as `/templates/<id>.json`. Registry entries MUST
+   match the `template` block inside the corresponding file (CI check
+   deferred past P1-A).
+3. **JoinScreen** fetches `/templates/registry.json` at mount and renders
+   one card per template: thumbnail image when `thumbnail` is present,
+   otherwise the placeholder color block; name in the UI locale;
+   description below. (Migrating the current hard-coded `MapChoice` list
+   in `web/src/state/syncleStore.ts` to be registry-driven is P1-A
+   implementer work, not part of this contract.)
+4. **On select:** fetch `template.url`, run `validateTemplate` (see §5);
+   on validation errors, log and fall back to the default map (never join
+   into a broken map). On success, `loadMapConfig(template.url)` loads
+   the world (unknown top-level keys are ignored by the loader) and the
+   join spawn is `spawn_points[0]`.
+
+### 5. Quality gates (normative — enforced by the validator)
+
+`web/src/domain/mapTemplate.ts` exports the pure function
+`validateTemplate(raw: unknown): { errors: string[]; warnings: string[] }`.
+`errors` empty ⇔ the template is legal. `warnings` are non-blocking
+authoring nudges. The JoinScreen flow (§4.4) treats any error as fatal.
+
+| # | Rule | Severity |
+|---|---|---|
+| Q1 | `template` block present; `id` kebab-case; `name`/`description` both `{ en, zh }` non-empty | error |
+| Q2 | `map_name` non-empty; `width`/`height` finite > 0; `background_color` or `background_image` present | error |
+| Q3 | ≥ 1 `zone` object; every zone has explicit `kind` ∈ `silent\|discussion\|rest`; **≥ 1 zone with `kind: "silent"`** (a study-room template needs a quiet main area) | error |
+| Q4 | **No dead zones:** every walkable cell is inside ≥ 1 zone (AABB point-in-rect). Walkable = 40 px sampling grid over `[0,width)×[0,height)`, excluding `SOLID_TYPES` AABBs. The error lists sample coordinates of unzoned cells. | error |
+| Q5 | `spawn_points` length ≥ 1; each point finite, inside `[0,width]×[0,height]`, and NOT inside any solid-object AABB | error |
+| Q6 | Every `table`/`desk` object has a non-empty `id`; ids unique across object tables/desks and top-level `tables[]`; table AABBs pairwise non-overlapping (edge-touching is allowed) | error |
+| Q7 | Every object rect has finite `x/y/width/height` with `width > 0`, `height > 0`; `type` is a known `MapObjectType` | error |
+| Q8 | Any object with `sprite` set → "verify the key exists in `ui/spriteAtlas.ts` SPRITES" | warning |
+| Q9 | `thumbnail` present but absolute (leading `/` or `scheme://`) → prefer a `/templates/`-relative path | warning |
+| Q10 | Zero tables, or floor-area-per-table < 20 000 px² (overcrowded) | warning |
+
+### Where it lives (P1-A targets)
+
+| Side | File | Symbol |
+|---|---|---|
+| Web | `web/src/domain/mapTemplate.ts` | `validateTemplate`, `TemplateValidation` (pure, unit-tested) |
+| Web | `web/src/domain/__tests__/mapTemplate.test.ts` | ≥ 15 cases covering every Q-rule above, positive and negative |
+| Web | `web/scripts/sync-assets.mjs` | `assets/templates/` → `web/public/templates/` (skip-if-missing) |
+| Repo | `assets/templates/<id>.json` | template files (authored by template workers, not P1-A) |
+| Repo | `assets/templates/registry.json` | picker registry (hand-maintained) |

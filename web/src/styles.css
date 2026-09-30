@@ -214,6 +214,85 @@ select {
   border-color: #fff;
 }
 
+/* P1-A template picker: cards replace the Map dropdown when the registry
+ * is live. Grid reflows with the join card width (min(420px, 100%)) so it
+ * works on phones without a separate mobile layout; each card is a real
+ * <button> with a touch-friendly minimum height. */
+.join-card .template-fieldset {
+  border: 1px solid #2a323d;
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  font-size: 13px;
+  color: #9aa4b1;
+}
+
+.join-card .template-fieldset > legend {
+  padding: 0 4px;
+}
+
+.join-card .template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.join-card .template-card {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-height: 120px;
+  padding: 8px;
+  text-align: left;
+  background: #0e1116;
+  border: 2px solid #2a323d;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.join-card .template-card:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.join-card .template-card.selected {
+  border-color: #2f80ed;
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.35);
+}
+
+/* Placeholder color block (hue from the template id). A present thumbnail
+ * overlays it absolutely; onError removes the <img> so a broken image
+ * never shows (contract §2). */
+.join-card .template-thumb {
+  position: relative;
+  display: block;
+  height: 64px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.join-card .template-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.join-card .template-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6e8eb;
+}
+
+.join-card .template-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #9aa4b1;
+}
+
 /* Character picker: 10×5 grid of 32×32 pixel-art tiles. Sprites are
  * 16×16 PNGs scaled 2× via background-size with NN scaling so they stay
  * crisp at any zoom. */

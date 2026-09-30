@@ -1,0 +1,64 @@
+{
+  "templates": [
+    {
+      "id": "cafe",
+      "name": {
+        "en": "Café",
+        "zh": "咖啡馆"
+      },
+      "description": {
+        "en": "A bright café study room: bar counter, scattered round tables, a window-side long desk, and a quiet nook.",
+        "zh": "明亮轻松的咖啡馆自习室：吧台、散座小圆桌、窗边长桌与安静角。"
+      },
+      "url": "/templates/cafe.json"
+    },
+    {
+      "id": "exam-sprint",
+      "name": {
+        "en": "Exam Sprint",
+        "zh": "考试周冲刺"
+      },
+      "description": {
+        "en": "High-density silent study grid with a tutoring corner and a cheer wall — built for finals week.",
+        "zh": "高密度静音自习格子间，配答疑角与加油墙，为考试周冲刺而生。"
+      },
+      "url": "/templates/exam-sprint.json"
+    },
+    {
+      "id": "library",
+      "name": {
+        "en": "Library",
+        "zh": "图书馆"
+      },
+      "description": {
+        "en": "A classic reading hall: long shared desks in a silent main hall, a discussion corner, and a cozy rest lounge.",
+        "zh": "经典阅览室：安静主厅的长条共享书桌、小组讨论角与休闲沙发区。"
+      },
+      "url": "/templates/library.json"
+    },
+    {
+      "id": "night-owl",
+      "name": {
+        "en": "Night Owl",
+        "zh": "深夜自习室"
+      },
+      "description": {
+        "en": "A dark, cozy late-night hall: warm lamplight rugs, scattered solo desks, and a midnight diner corner.",
+        "zh": "深蓝夜色中的深夜自习室：暖光地毯、散点小书桌与深夜食堂角。"
+      },
+      "url": "/templates/night-owl.json"
+    },
+    {
+      "id": "welcome",
+      "name": {
+        "en": "Welcome Hall",
+        "zh": "开学迎新"
+      },
+      "description": {
+        "en": "An open welcome hall with a ring of chat tables, a central info desk, and a quiet corner.",
+        "zh": "开放式迎新大厅：环形交流桌、中央咨询台与一处安静角，轻松开场。"
+      },
+      "url": "/templates/welcome.json"
+    }
+  ]
+}

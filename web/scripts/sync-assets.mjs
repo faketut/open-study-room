@@ -12,6 +12,8 @@ const assetsDir = resolve(webDir, "..", "assets");
 const publicDir = resolve(webDir, "public");
 const spritesSrc = resolve(assetsDir, "sprites");
 const spritesDst = resolve(publicDir, "sprites");
+const templatesSrc = resolve(assetsDir, "templates");
+const templatesDst = resolve(publicDir, "templates");
 
 // Top-level public files (served at `/<name>`).
 const topLevel = ["map_config.json", "room1.jpg"];
@@ -36,3 +38,13 @@ if (!existsSync(spritesSrc)) {
 }
 await cp(spritesSrc, spritesDst, { recursive: true });
 console.log(`[sync-assets] sprites/ -> public/sprites/`);
+
+// P1-A map templates (contracts.md "Map templates"). Optional: template
+// authors create assets/templates/ later, so a missing dir is a skip, not
+// an error (unlike map_config.json / sprites above).
+if (!existsSync(templatesSrc)) {
+  console.log(`[sync-assets] no templates dir, skipping`);
+} else {
+  await cp(templatesSrc, templatesDst, { recursive: true });
+  console.log(`[sync-assets] templates/ -> public/templates/`);
+}

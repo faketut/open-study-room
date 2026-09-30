@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  DEFAULT_MAP,
   getMapChoices,
   isValidNickname,
   isValidRoom,
@@ -9,6 +10,22 @@ import {
 } from "../state/syncleStore";
 import { createSession, getOrCreateDeviceId, listChannels } from "../data/sessionApi";
 import { loadMapConfig } from "../domain/mapConfig";
+// P1-A template picker (contracts.md "Map templates" §4): registry-driven
+// cards replace the Map dropdown when templates are published; every
+// failure path falls back to the existing default map flow, never a blank
+// screen or a broken map.
+import {
+  fetchRegistry,
+  loadSelectedTemplateId,
+  localizeText,
+  pickSelectedTemplate,
+  pickUiLang,
+  resolveJoinTemplate,
+  saveSelectedTemplateId,
+  templatePlaceholderHue,
+  thumbnailUrl,
+  type RegistryTemplateEntry,
+} from "../domain/templateRegistry";
 import {
   connectLiveKit,
   publishProfileAttributes,
@@ -54,6 +71,40 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
   // Computed at mount time; the user only comes back here after editing, so
   // a freshly-mounted JoinScreen picks up "Custom (your edits)" if saved.
   const mapChoices = useMemo(() => getMapChoices(), []);
+  // P1-A: template registry. null = still loading or unavailable; an empty
+  // array = registry fetched but no templates. Both states silently fall
+  // back to the legacy Map dropdown below (never a white screen).
+  const [templates, setTemplates] = useState<RegistryTemplateEntry[] | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+    () => loadSelectedTemplateId(),
+  );
+  const uiLang = useMemo(
+    () =>
+      pickUiLang(typeof navigator !== "undefined" ? navigator.language : undefined),
+    [],
+  );
+  useEffect(() => {
+    let alive = true;
+    void fetchRegistry().then((list) => {
+      if (!alive) return;
+      setTemplates(list ?? []);
+      if (list != null && list.length > 0) {
+        // Pre-select the persisted choice; if it is gone (template removed),
+        // fall back to the first template so cards always reflect the join.
+        const saved = loadSelectedTemplateId();
+        const valid =
+          saved != null && list.some((t) => t.id === saved)
+            ? saved
+            : list[0].id;
+        setSelectedTemplateId(valid);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const useTemplatePicker = templates != null && templates.length > 0;
 
   const nicknameOk = isValidNickname(joinDraft.nickname);
   const roomOk = isValidRoom(joinDraft.room);
@@ -70,9 +121,45 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
     setKicked(null);
     setConn("connecting");
     try {
-      const choice =
-        mapChoices.find((c) => c.url === joinDraft.mapUrl) ?? mapChoices[0];
-      const map = await loadMapConfig(choice.url);
+      // Map resolution (contracts.md §4.4): prefer the registry template when
+      // the picker is active; fetch it, run validateTemplate, and fall back
+      // to DEFAULT_MAP on ANY failure (bad JSON, validator errors, fetch
+      // failure) — never join into a broken map. Without a registry the
+      // legacy Map dropdown choice is used unchanged.
+      let mapUrl = DEFAULT_MAP.url;
+      let spawn = DEFAULT_MAP.spawn;
+      const template = useTemplatePicker
+        ? pickSelectedTemplate(templates, selectedTemplateId)
+        : null;
+      if (template != null) {
+        try {
+          const tplRes = await fetch(template.url);
+          if (!tplRes.ok) throw new Error(`template fetch failed: ${tplRes.status}`);
+          const rawTemplate: unknown = await tplRes.json();
+          const resolved = resolveJoinTemplate(rawTemplate, template.url);
+          if (resolved.ok) {
+            mapUrl = resolved.url;
+            spawn = resolved.spawn;
+            saveSelectedTemplateId(template.id);
+          } else {
+            console.error(
+              `[P1-A] template "${template.id}" failed validation, falling back to default map:`,
+              resolved.errors,
+            );
+          }
+        } catch (e) {
+          console.error(
+            `[P1-A] failed to load template "${template.id}", falling back to default map:`,
+            e,
+          );
+        }
+      } else {
+        const choice =
+          mapChoices.find((c) => c.url === joinDraft.mapUrl) ?? mapChoices[0];
+        mapUrl = choice.url;
+        spawn = choice.spawn;
+      }
+      const map = await loadMapConfig(mapUrl);
       setMap(map);
 
       const deviceId = getOrCreateDeviceId();
@@ -90,8 +177,8 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         userId: session.userId,
         nickname: session.nickname,
         color: session.color,
-        x: choice.spawn.x,
-        y: choice.spawn.y,
+        x: spawn.x,
+        y: spawn.y,
         tableId: null,
         status: "available",
         manualBusy: false,
@@ -102,7 +189,6 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
       resetSeq();
       // Build the handler bundle once; the reconnect controller re-uses
       // this same object on every retry so we don't lose data callbacks.
-      const spawn = choice.spawn;
       const roomName = joinDraft.room;
       const events: PeerEvents = {
         onPeerJoined: (identity, name) =>
@@ -350,19 +436,73 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
           )}
         </label>
 
-        <label>
-          Map
-          <select
-            value={joinDraft.mapUrl}
-            onChange={(e) => setJoinDraft({ mapUrl: e.target.value })}
-          >
-            {mapChoices.map((c) => (
-              <option key={c.id} value={c.url}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {useTemplatePicker ? (
+          <fieldset className="template-fieldset">
+            <legend>Map template</legend>
+            <div className="template-grid">
+              {templates!.map((t) => {
+                const selected = t.id === selectedTemplateId;
+                const thumb = thumbnailUrl(t);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`template-card${selected ? " selected" : ""}`}
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setSelectedTemplateId(t.id);
+                      saveSelectedTemplateId(t.id);
+                    }}
+                  >
+                    <span
+                      className="template-thumb"
+                      aria-hidden="true"
+                      style={{
+                        background: `hsl(${templatePlaceholderHue(t.id)} 45% 32%)`,
+                      }}
+                    >
+                      {thumb != null && (
+                        <img
+                          src={thumb}
+                          alt=""
+                          loading="lazy"
+                          // Contract §2: never show a broken <img>; drop it
+                          // and reveal the placeholder color block beneath.
+                          onError={(e) => e.currentTarget.remove()}
+                        />
+                      )}
+                    </span>
+                    <span className="template-name">
+                      {localizeText(t.name, uiLang)}
+                    </span>
+                    <span className="template-desc">
+                      {localizeText(t.description, uiLang)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+        ) : (
+          <label>
+            Map
+            <select
+              value={joinDraft.mapUrl}
+              onChange={(e) => setJoinDraft({ mapUrl: e.target.value })}
+              disabled={templates === null}
+            >
+              {templates === null ? (
+                <option>Loading map templates…</option>
+              ) : (
+                mapChoices.map((c) => (
+                  <option key={c.id} value={c.url}>
+                    {c.label}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+        )}
 
         <fieldset className="char-fieldset">
           <legend>Character (#{String(joinDraft.characterIndex).padStart(2, "0")})</legend>

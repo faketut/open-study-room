@@ -1,0 +1,460 @@
+{
+  "template": {
+    "id": "night-owl",
+    "name": {
+      "en": "Night Owl",
+      "zh": "深夜自习室"
+    },
+    "description": {
+      "en": "A dark, cozy late-night hall: warm lamplight rugs, scattered solo desks, and a midnight diner corner.",
+      "zh": "深蓝夜色中的深夜自习室：暖光地毯、散点小书桌与深夜食堂角。"
+    }
+  },
+  "map_name": "Night Owl",
+  "width": 1000,
+  "height": 800,
+  "background_color": "#171c2b",
+  "objects": [
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 0,
+      "width": 1000,
+      "height": 20
+    },
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 780,
+      "width": 1000,
+      "height": 20
+    },
+    {
+      "type": "wall",
+      "x": 0,
+      "y": 20,
+      "width": 20,
+      "height": 760
+    },
+    {
+      "type": "wall",
+      "x": 980,
+      "y": 20,
+      "width": 20,
+      "height": 760
+    },
+    {
+      "type": "zone",
+      "id": "zone-main",
+      "label": "Main Hall",
+      "kind": "silent",
+      "x": 20,
+      "y": 20,
+      "width": 960,
+      "height": 500
+    },
+    {
+      "type": "zone",
+      "id": "zone-quiet",
+      "label": "Quiet Corner",
+      "kind": "rest",
+      "x": 20,
+      "y": 520,
+      "width": 620,
+      "height": 260
+    },
+    {
+      "type": "zone",
+      "id": "zone-diner",
+      "label": "Midnight Diner",
+      "kind": "rest",
+      "x": 640,
+      "y": 520,
+      "width": 340,
+      "height": 260
+    },
+    {
+      "type": "rug",
+      "x": 60,
+      "y": 50,
+      "width": 860,
+      "height": 160,
+      "color": "#5c4a2e"
+    },
+    {
+      "type": "rug",
+      "x": 60,
+      "y": 300,
+      "width": 860,
+      "height": 170,
+      "color": "#54452b"
+    },
+    {
+      "type": "desk",
+      "id": "desk-n1",
+      "label": "DESK-N1",
+      "x": 90,
+      "y": 90,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 140,
+      "y": 160,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n2",
+      "label": "DESK-N2",
+      "x": 300,
+      "y": 70,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 350,
+      "y": 140,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n3",
+      "label": "DESK-N3",
+      "x": 510,
+      "y": 70,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 560,
+      "y": 140,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n4",
+      "label": "DESK-N4",
+      "x": 720,
+      "y": 90,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 770,
+      "y": 160,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n9",
+      "label": "DESK-N9",
+      "x": 410,
+      "y": 210,
+      "width": 180,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 480,
+      "y": 280,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n5",
+      "label": "DESK-N5",
+      "x": 90,
+      "y": 330,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 140,
+      "y": 400,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n6",
+      "label": "DESK-N6",
+      "x": 300,
+      "y": 350,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 350,
+      "y": 420,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n7",
+      "label": "DESK-N7",
+      "x": 510,
+      "y": 350,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 560,
+      "y": 420,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "desk",
+      "id": "desk-n8",
+      "label": "DESK-N8",
+      "x": 720,
+      "y": 330,
+      "width": 120,
+      "height": 64
+    },
+    {
+      "type": "chair",
+      "x": 770,
+      "y": 400,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "cabinet",
+      "x": 800,
+      "y": 28,
+      "width": 56,
+      "height": 44,
+      "sprite": "chest_closed"
+    },
+    {
+      "type": "cabinet",
+      "x": 862,
+      "y": 28,
+      "width": 56,
+      "height": 44,
+      "sprite": "chest_closed"
+    },
+    {
+      "type": "plant",
+      "x": 24,
+      "y": 24,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "plant",
+      "x": 940,
+      "y": 24,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "plant",
+      "x": 24,
+      "y": 460,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "plant",
+      "x": 940,
+      "y": 460,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "rug",
+      "x": 60,
+      "y": 550,
+      "width": 520,
+      "height": 200,
+      "color": "#4d3f2a"
+    },
+    {
+      "type": "chair",
+      "x": 120,
+      "y": 600,
+      "width": 40,
+      "height": 40,
+      "sprite": "armchair_blue"
+    },
+    {
+      "type": "chair",
+      "x": 220,
+      "y": 600,
+      "width": 40,
+      "height": 40,
+      "sprite": "armchair_red"
+    },
+    {
+      "type": "chair",
+      "x": 320,
+      "y": 600,
+      "width": 40,
+      "height": 40,
+      "sprite": "armchair_purple"
+    },
+    {
+      "type": "chair",
+      "x": 420,
+      "y": 600,
+      "width": 40,
+      "height": 40,
+      "sprite": "armchair_blue"
+    },
+    {
+      "type": "table",
+      "id": "table-q1",
+      "label": "Q1",
+      "x": 220,
+      "y": 660,
+      "width": 160,
+      "height": 44
+    },
+    {
+      "type": "cabinet",
+      "x": 560,
+      "y": 560,
+      "width": 56,
+      "height": 180,
+      "sprite": "shelf"
+    },
+    {
+      "type": "plant",
+      "x": 24,
+      "y": 724,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "plant",
+      "x": 500,
+      "y": 724,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_red"
+    },
+    {
+      "type": "rug",
+      "x": 660,
+      "y": 560,
+      "width": 280,
+      "height": 190,
+      "color": "#6b4a2e"
+    },
+    {
+      "type": "cabinet",
+      "x": 660,
+      "y": 540,
+      "width": 200,
+      "height": 44,
+      "sprite": "counter"
+    },
+    {
+      "type": "cabinet",
+      "x": 660,
+      "y": 584,
+      "width": 44,
+      "height": 150,
+      "sprite": "counter"
+    },
+    {
+      "type": "table",
+      "id": "table-m1",
+      "label": "M1",
+      "x": 740,
+      "y": 620,
+      "width": 150,
+      "height": 70
+    },
+    {
+      "type": "table",
+      "id": "table-m2",
+      "label": "M2",
+      "x": 740,
+      "y": 700,
+      "width": 150,
+      "height": 70
+    },
+    {
+      "type": "chair",
+      "x": 770,
+      "y": 586,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "chair",
+      "x": 850,
+      "y": 586,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "chair",
+      "x": 896,
+      "y": 716,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "chair",
+      "x": 896,
+      "y": 742,
+      "width": 28,
+      "height": 28
+    },
+    {
+      "type": "board",
+      "x": 900,
+      "y": 560,
+      "width": 56,
+      "height": 80
+    },
+    {
+      "type": "plant",
+      "x": 930,
+      "y": 700,
+      "width": 36,
+      "height": 36,
+      "sprite": "plant_pink"
+    },
+    {
+      "type": "door",
+      "x": 480,
+      "y": 762,
+      "width": 60,
+      "height": 18
+    }
+  ],
+  "spawn_points": [
+    {
+      "x": 510,
+      "y": 720
+    },
+    {
+      "x": 140,
+      "y": 700
+    }
+  ]
+}
