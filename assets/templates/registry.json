@@ -31,8 +31,8 @@
         "zh": "图书馆"
       },
       "description": {
-        "en": "A classic reading hall: long shared desks in a silent main hall, a discussion corner, and a cozy rest lounge.",
-        "zh": "经典阅览室：安静主厅的长条共享书桌、小组讨论角与休闲沙发区。"
+        "en": "A compact reading hall: silent tables in the north hall, a discussion corner with a wall whiteboard, and a lobby + lounge in the south.",
+        "zh": "紧凑的阅览室：北侧安静阅览厅（四人桌行列式）、东角讨论区（白板上墙）、南侧门厅与休闲沙发区。"
       },
       "url": "/templates/library.json"
     },

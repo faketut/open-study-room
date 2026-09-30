@@ -1549,3 +1549,140 @@ the login-session token. Roles: draw = anyone in the zone; clear = host
 only. Zones: board exists only for `discussion`; panel auto-closes on
 leaving. Perf: 500 ms debounce, 2/s cap, 256 KiB snapshot cap, lazy-loaded
 editor. Anonymous flow: untouched (no identity columns involved).
+
+## Layout & contextual UI (layout revamp, 2026-09-30)
+
+Study-room maps are redesigned around two axes — **sound zoning** and
+**function zoning** — and the in-room UI follows an RPG rule: **no buttons
+by default; UI appears only when contextually relevant**. This section
+freezes the layout principles every template must follow, the contextual
+UI state machine, and the implementation targets. Only the `library`
+template is redrawn in this change; the other four templates adopt these
+principles in follow-up work.
+
+Reference takeaways (researched 2026-09-30, not deep-dived):
+- WorkAdventure: size spawn areas for crowds (never stack spawns on one
+  point); trigger actions on area enter/exit.
+- Gather: private sub-spaces read as floor-color-delimited areas; a
+  single interact key (`x`) for all objects instead of per-object buttons.
+- RPG map craft: spatial rhythm (tight passages ↔ open chambers), region
+  distinction (each area feels different), one landmark per area for
+  orientation.
+
+### 1. Layout principles (normative for template authors)
+
+**Sound zoning.** The silent main hall is the product's core (M1 quiet
+semantics). It is buffered from the discussion zone by a physical
+divider (wall / bookshelf cabinets) with a single doorway, and it never
+shares a wall-less edge with `discussion`. `rest` zones (lobby, lounge)
+may sit adjacent to `silent` — they are transit / quiet-talk areas.
+
+**Function zoning.** Entrance at the south: door → lobby (rest). The
+lobby is the circulation hub fanning out to three areas: silent reading
+hall (north), discussion corner (east), lounge (west/south). A newcomer
+spawning in the lobby sees all three destinations.
+
+**Circulation.** Main openings ≥ 120 px; aisles between adjacent tables
+≥ 64 px. Avatar sprites are ~16–24 px, so 64 px ≈ 3 avatar widths —
+comfortable to walk without pixel-hunting. Every table cluster must be
+reachable from the lobby without crossing another table's AABB.
+
+**Proportion rules.**
+- Room footprint ≤ 880×640. Rationale: larger rooms feel hollow with
+  < 20 occupants and waste camera travel; the old 1000×800 library did.
+- Standard table is a 4-person table ≈ 180×72 with 6 chairs (3 per long
+  side). At most **one** long table (> 300 px) per room.
+- Spawn: ≥ 2 spawn points in the lobby, spread ≥ 120 px apart
+  (WorkAdventure lesson — no stacked spawns).
+- Landmark per zone (rug color, bookshelf run, plant cluster) so each
+  area reads differently at a glance (RPG region distinction).
+
+These are authoring guidelines, not validator rules — Q1–Q10 stay the
+mechanical gates. A template that violates §1 should fail review, not
+the validator.
+
+### 2. Contextual UI contract (RPG-style, normative)
+
+**Core rule: no buttons by default.** The canvas is the interface.
+Interface elements appear only when the player's context makes them
+relevant, and disappear when it doesn't.
+
+**Context state machine** (client-side, pure function
+`contextSuiteFor(state)` in `web/src/domain/contextUi.ts`):
+
+| Priority | Context | Suite shown |
+|---|---|---|
+| 1 | `seated` (self.tableId != null) | Meeting suite: mic / cam / share / meeting-view / leave-table. The only state where media buttons exist. |
+| 2 | `nearbyBoard` / `nearbyNote` | Object suite: single contextual prompt — desktop key hint (`F 打开`), touch `TouchActionBar` ("打开"). Board wins over note (matches today's F-key order). |
+| 3 | `nearbyTable` (standing) | Sit suite: desktop `E 坐下` hint, touch "坐下" button. |
+| 4 | `nearbyPerson` (a peer within interaction radius, and no suite 1–3 active) | Person suite: small card with peer name + 屏蔽 / 举报 buttons. Reuses M2 `blockList` / report logic (the same handlers as `WhosWherePanel`'s action menu). |
+| 5 | `silentZone` | PTT suite: today's `PttButton` + Space hint, unchanged. Orthogonal — may co-render with suites 1–4. |
+| 6 | idle | Nothing. Empty canvas, empty bottom bar. |
+
+While seated, E / "起身" leaves the table (today's toggle semantics,
+unchanged). `interactActionFor` (touch) and the desktop key hints are
+driven by the **same** context state — touch/desktop parity is a
+contract requirement, not a nice-to-have.
+
+**Zone pill.** Top-left. Appears on zone change (RPG "area name banner",
+cf. WorkAdventure enter-area triggers), auto-fades after 2.5 s. Never
+persists, never stacks with other UI.
+
+**Top-left persistent row** is identity only: nickname + status pill +
+(P1-B) account chip. All panel toggles (theme, mini mode, now playing,
+perf, focus stats, moderation) collapse into a single top-right `⋯`
+overflow menu. Chat keeps its dedicated entry (button + `T` key + unread
+badge) — it is the primary social channel, not a contextual action.
+
+**Key hints.** The static WASD legend is removed. Movement hint shows
+once until the player's first move, then never again (RPG tutorial
+toast). Afterwards only the contextual hint for the active suite shows
+(e.g. `E 坐下`, `F 打开`, `Space 说话`).
+
+**Mobile.** `TouchActionBar` semantics unchanged (`board`/`note`/
+`sit`/`stand` via `interactActionFor`); it renders inside the bottom
+`ContextActionBar` instead of standalone. The person suite and zone pill
+are pointer-agnostic. No MW1 regression: joystick, drawers, safe-area,
+and PTT behavior are untouched.
+
+### 3. Explicitly out of scope
+
+- Redrawing the other four templates (`cafe`, `night-owl`,
+  `exam-sprint`, `welcome`) — they keep their current JSON until
+  follow-up work applies §1.
+- Walk-cycle character animation (chars remain single-frame).
+- Changing zone semantics, AOI, moderation, focus, or whiteboard
+  contracts — this section only re-arranges pixels and UI chrome.
+
+### Where it lives
+
+| Side | File | Symbol |
+|---|---|---|
+| Web | `web/src/domain/contextUi.ts` (new) | `contextSuiteFor`, `ContextState`, `ContextSuite` (pure, unit-tested) |
+| Web | `web/src/ui/ContextActionBar.tsx` (new) | bottom-bar renderer; empty when suite is `idle` |
+| Web | `web/src/ui/SyncleScreen.tsx` | remove always-visible mic/cam/share/meeting-view buttons → meeting suite; wire `ContextActionBar`; zone pill; `⋯` menu |
+| Web | `web/src/ui/PersonCard.tsx` (new) | person suite card; reuses `domain/blockList` + report flow |
+| Repo | `assets/templates/library.json` | redrawn per §1 (880×640, lobby hub, divider-buffered silent hall) |
+
+### Test coverage
+
+- `web/src/domain/__tests__/contextUi.test.ts`: priority order of
+  `contextSuiteFor` (seated > board > note > table > person > idle),
+  touch/desktop parity cases, PTT orthogonality.
+- `web/src/domain/__tests__/mapTemplate.test.ts`: library.json still
+  validates with zero errors under Q1–Q10 (existing suite, extended with
+  the new file's expectations).
+- All 407 existing web tests stay green; no server changes.
+
+### Self-consistency checklist (for the implementer)
+
+Layout: one template redrawn (`library`); footprint ≤ 880×640; silent
+hall divider-buffered from discussion; lobby hub with spread spawns;
+aisles ≥ 64 px; ≤ 1 long table. UI: no buttons by default; suites are
+seated / board-note / table / person / PTT / idle with the priority
+above; media buttons exist only in the meeting suite; zone pill is
+transient (2.5 s); `⋯` menu holds the six panel toggles; chat keeps its
+entry; WASD legend removed; touch parity via `interactActionFor`.
+Tests: new `contextUi` suite + template validation green + all existing
+green. Out of scope: other four templates, walk cycles, any semantic
+contract change.

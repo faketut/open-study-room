@@ -400,8 +400,9 @@ function PeerMenu({
 }
 
 /** Report dialog: reason (4 options per contract) + optional detail
- *  (≤500 chars) → POST /v1/rooms/:room/reports. */
-function ReportDialog({
+ *  (≤500 chars) → POST /v1/rooms/:room/reports.
+ *  Exported for reuse by the person suite card (PersonCard). */
+export function ReportDialog({
   targetName,
   onSubmit,
   onClose,
@@ -485,7 +486,9 @@ function initials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-function describeReportError(err: unknown): string {
+/** Map a report-submission failure to a user-facing string. Exported so
+ *  PersonCard reuses the exact same error wording as WhosWherePanel. */
+export function describeReportError(err: unknown): string {
   if (err instanceof SessionApiError) {
     const code = moderationErrorCode(err.details);
     if (code) return moderationErrorMessage(code);

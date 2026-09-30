@@ -6,8 +6,9 @@ import {
 } from "lucide-react";
 import { SpatialCanvas } from "./SpatialCanvas";
 import { TouchJoystick } from "./TouchJoystick";
-import { TouchActionBar } from "./TouchActionBar";
 import { PttButton } from "./PttButton";
+import { ContextActionBar } from "./ContextActionBar";
+import { PersonCard } from "./PersonCard";
 import { MobileDrawer } from "./MobileDrawer";
 import { PerfSettings } from "./PerfSettings";
 import {
@@ -47,6 +48,7 @@ import {
   zoneAllowsAudio,
   zonesOf,
   findZoneAt,
+  ZONE_KIND_LABELS,
   type ZoneKind,
 } from "../domain/zones";
 import {
@@ -64,6 +66,10 @@ import {
   interactActionFor,
   type TouchAction,
 } from "../domain/touchActions";
+import {
+  NEARBY_PERSON_RADIUS,
+  nearestPeerWithinRadius,
+} from "../domain/contextUi";
 import { computeViewport } from "../domain/camera";
 import {
   readPerfTier,
@@ -130,6 +136,17 @@ function readPersistedMuted(): boolean {
     return false;
   }
 }
+/** localStorage key for the one-time movement hint (contextual UI §2:
+ *  the WASD hint shows once until the player's first move, then never). */
+const MOVE_HINT_KEY = "syncle.moveHintSeen";
+
+function readMoveHintSeen(): boolean {
+  try {
+    return localStorage.getItem(MOVE_HINT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 export interface SyncleScreenProps {
   room: Room;
@@ -157,7 +174,6 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // from the env allowlist — the client never asserts it; the server DB is
   // the final arbiter for every moderation call).
   const isModerator = self?.role === "host" || self?.role === "admin";
-  const peerCount = useSyncle((s) => s.peers.size);
   const setSelfPosition = useSyncle((s) => s.setSelfPosition);
   const setSelfTable = useSyncle((s) => s.setSelfTable);
   // Stable signature that only changes when some peer's tableId changes (not
@@ -196,6 +212,27 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   const [nearbyBoardIndex, setNearbyBoardIndex] = useState<number | null>(null);
   /** When set, render the BoardModal for this board. */
   const [viewingBoardIndex, setViewingBoardIndex] = useState<number | null>(null);
+  /** Contextual UI §2 (person suite): identity of the nearest peer within
+   *  NEARBY_PERSON_RADIUS, or null. Computed in the game loop; the card
+   *  looks up display info from the store. */
+  const [nearbyPerson, setNearbyPerson] = useState<string | null>(null);
+  /** Zone pill: transient RPG area-name banner on zone change, auto-fades
+   *  after 2.5 s (contextual UI §2). `seq` retriggers on re-entry. */
+  const [zonePill, setZonePill] = useState<{
+    kind: ZoneKind;
+    label: string;
+    seq: number;
+  } | null>(null);
+  const [zonePillFaded, setZonePillFaded] = useState(false);
+  const zonePillSeqRef = useRef(0);
+  /** One-time movement hint: true once the player has moved (persisted). */
+  const [moveHintSeen, setMoveHintSeen] = useState<boolean>(readMoveHintSeen);
+  const moveHintSeenRef = useRef<boolean>(readMoveHintSeen());
+  /** Top-right ⋯ overflow menu (theme / mini / now-playing / perf /
+   *  focus stats / moderation toggles). */
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const overflowOpenRef = useRef(false);
+  useEffect(() => { overflowOpenRef.current = overflowOpen; }, [overflowOpen]);
   // Refs so the keydown closure (which is registered once) can read current
   // values without re-binding on every state change.
   const nearbyNoteIndexRef = useRef<number | null>(null);
@@ -734,6 +771,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       if (isMoveKey(e.key)) {
         e.preventDefault();
         keysRef.current.add(e.key.toLowerCase());
+        // Contextual UI §2: the movement hint shows once until the player's
+        // first move, then never again (persisted across reloads).
+        if (!moveHintSeenRef.current) {
+          moveHintSeenRef.current = true;
+          setMoveHintSeen(true);
+          try {
+            localStorage.setItem(MOVE_HINT_KEY, "1");
+          } catch {
+            /* storage unavailable; ignore */
+          }
+        }
       } else if (e.key === " ") {
         // T4 push-to-talk: hold Space to talk in silent zones (mic only).
         // Space has no PTT semantics in discussion/rest/none zones, and is
@@ -791,6 +839,9 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         } else if (viewingBoardIndexRef.current != null) {
           e.preventDefault();
           setViewingBoardIndex(null);
+        } else if (overflowOpenRef.current) {
+          e.preventDefault();
+          setOverflowOpen(false);
         }
       }
     };
@@ -1027,6 +1078,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           lastZoneRef.current = { id: zoneId, kind };
           setZoneKind(kind);
           zoneKindRef.current = kind;
+          // Contextual UI §2: zone pill — transient RPG area-name banner on
+          // zone change (not when drifting into unzoned space). The fade
+          // effect below clears it after 2.5 s.
+          if (kind !== "none") {
+            zonePillSeqRef.current += 1;
+            setZonePill({
+              kind,
+              label: zoneObj?.label ?? ZONE_KIND_LABELS[kind],
+              seq: zonePillSeqRef.current,
+            });
+          }
           // P1-C (contract §3): boards are per discussion zone. Leaving the
           // zone the open board belongs to — including crossing into a
           // *different* discussion zone — closes the panel immediately and
@@ -1107,6 +1169,21 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         );
         const bIdx = nearBoard?.index ?? null;
         if (bIdx !== nearbyBoardIndex) setNearbyBoardIndex(bIdx);
+        // Contextual UI §2 (person suite): nearest peer within interaction
+        // radius. Skipped while seated — the meeting suite wins
+        // unconditionally, so there is no one to compute for.
+        if (liveSelf.tableId) {
+          if (nearbyPerson !== null) setNearbyPerson(null);
+        } else {
+          const nearPeer = nearestPeerWithinRadius(
+            liveSelf.x,
+            liveSelf.y,
+            useSyncle.getState().peers.values(),
+            NEARBY_PERSON_RADIUS,
+          );
+          const pid = nearPeer?.identity ?? null;
+          if (pid !== nearbyPerson) setNearbyPerson(pid);
+        }
       }
 
       rafRef.current = requestAnimationFrame(tick);
@@ -1117,7 +1194,20 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
-  }, [map, room, setSelfPosition, nearbyTable, nearbyNoteIndex, nearbyBoardIndex]);
+  }, [map, room, setSelfPosition, nearbyTable, nearbyNoteIndex, nearbyBoardIndex, nearbyPerson]);
+
+  // Contextual UI §2: zone pill auto-fade. Starts fading at 2.5 s
+  // (CSS transition), removed from the tree at 3 s.
+  useEffect(() => {
+    if (!zonePill) return;
+    setZonePillFaded(false);
+    const fadeId = window.setTimeout(() => setZonePillFaded(true), 2500);
+    const clearId = window.setTimeout(() => setZonePill(null), 3000);
+    return () => {
+      window.clearTimeout(fadeId);
+      window.clearTimeout(clearId);
+    };
+  }, [zonePill]);
 
   // M1 mic publish gate ("quiet by default"). No tracks are published on
   // room join; mic MAY publish when (a) seated at a table in a
@@ -1347,6 +1437,13 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     });
   const camActive = seated && !userCamOff && !camDenied;
 
+  // Contextual UI §2 (person suite): display info for the nearby peer card.
+  // Read via getState at render time; the rAF loop re-renders whenever the
+  // qualifying identity changes, so this never goes stale.
+  const nearbyPeer = nearbyPerson
+    ? useSyncle.getState().peers.get(nearbyPerson)
+    : undefined;
+
   return (
     <div
       className={`syncle-screen${miniMode ? " mini" : ""}${perfTier === "battery" ? " perf-battery" : ""}`}
@@ -1427,69 +1524,128 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               </button>
             </span>
           )}
-          <button
-            type="button"
-            className="view-toggle"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            aria-pressed={theme === "dark"}
-          >
-            {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-          </button>
-          <button
-            type="button"
-            className="view-toggle"
-            onClick={() => setMiniMode(!miniMode)}
-            title={miniMode ? "Exit mini mode" : "Enter mini mode"}
-            aria-label={miniMode ? "Exit mini mode" : "Enter mini mode"}
-            aria-pressed={miniMode}
-          >
-            {miniMode ? <ExpandIcon /> : <MinimizeIcon />}
-          </button>
-          <button
-            type="button"
-            className="view-toggle"
-            onClick={() => setNowPlayingOpen((v) => !v)}
-            title="Set 'now playing' status (visible to peers)"
-            aria-label="Now playing"
-            aria-pressed={nowPlayingOpen}
-          >
-            <MusicIcon />
-          </button>
-          <button
-            type="button"
-            className="view-toggle"
-            onClick={() => setPerfOpen((v) => !v)}
-            title="Performance settings"
-            aria-label="Performance settings"
-            aria-pressed={perfOpen}
-          >
-            <Settings size={14} aria-hidden="true" />
-          </button>
-          {isModerator && (
+        </div>
+        {/* Contextual UI §2: key hints moved into ContextActionBar (one hint
+            per active suite, plus the one-time movement hint). */}
+        {micDenied && (
+          <div className="perm-banner" role="alert">
+            <MicOff size={14} aria-hidden="true" />
+            <span>Mic blocked or no input device.</span>{" "}
             <button
               type="button"
-              className="view-toggle"
-              onClick={() => setModerationOpen(true)}
-              title="Moderation panel (host / admin)"
-              aria-label="Moderation panel"
+              className="perm-banner-action"
+              onClick={() => {
+                // Clear latch + unmute so the publish effect re-prompts.
+                setMicDenied(false);
+                setUserMuted(false);
+              }}
             >
-              <Shield size={14} aria-hidden="true" />
+              Retry
             </button>
-          )}
-          {/* M3 T10: focus stats entry. */}
-          <button
-            type="button"
-            className="view-toggle"
-            onClick={() => setStatsOpen(true)}
-            title="专注统计 (focus stats)"
-            aria-label="专注统计"
-            aria-pressed={statsOpen}
-          >
-            <Timer size={14} aria-hidden="true" />
-          </button>
+          </div>
+        )}
+        {/* MW1-3: hold-to-talk renders only on coarse pointers (internal
+            mount gate). The touch contextual action button now lives inside
+            ContextActionBar. PTT logic itself is unchanged. */}
+        <PttButton
+          visible={zoneKind === "silent"}
+          onHoldStart={pttHoldStart}
+          onHoldEnd={pttHoldEnd}
+        />
+        {/* M3 T11: sit ritual. One-tap focus entry while seated and the
+            pomodoro is idle. Fixed-position card, touch-friendly buttons. */}
+        {seated && pomodoroPhase === "idle" && <SitFocusPrompt />}
+      </div>
+      {/* Contextual UI §2: zone pill — transient RPG area-name banner on
+          zone change, auto-fades after 2.5 s (see the zonePill effect). */}
+      {zonePill && (
+        <div
+          className={`zone-pill${zonePillFaded ? " faded" : ""}`}
+          aria-hidden="true"
+        >
+          {zonePill.label}
         </div>
+      )}
+      {/* Contextual UI §2: top-right ⋯ overflow menu holding the six panel
+          toggles (theme / mini / now-playing / perf / focus stats /
+          moderation). Chat keeps its dedicated entry below. */}
+      <div className="overflow-menu">
+        <button
+          type="button"
+          className="overflow-toggle"
+          onClick={() => setOverflowOpen((v) => !v)}
+          aria-expanded={overflowOpen}
+          aria-label="更多设置"
+          title="更多设置"
+        >
+          ⋯
+        </button>
+        {overflowOpen && (
+          <div className="overflow-panel" role="menu" aria-label="界面设置">
+            <button
+              type="button"
+              role="menuitem"
+              className="overflow-item"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-pressed={theme === "dark"}
+            >
+              {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+              <span>{theme === "dark" ? "浅色主题" : "深色主题"}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="overflow-item"
+              onClick={() => setMiniMode(!miniMode)}
+              aria-pressed={miniMode}
+            >
+              {miniMode ? <ExpandIcon /> : <MinimizeIcon />}
+              <span>{miniMode ? "退出迷你模式" : "迷你模式"}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="overflow-item"
+              onClick={() => setNowPlayingOpen((v) => !v)}
+              aria-pressed={nowPlayingOpen}
+            >
+              <MusicIcon />
+              <span>Now playing</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="overflow-item"
+              onClick={() => setPerfOpen((v) => !v)}
+              aria-pressed={perfOpen}
+            >
+              <Settings size={14} aria-hidden="true" />
+              <span>性能设置</span>
+            </button>
+            {isModerator && (
+              <button
+                type="button"
+                role="menuitem"
+                className="overflow-item"
+                onClick={() => setModerationOpen(true)}
+              >
+                <Shield size={14} aria-hidden="true" />
+                <span>管理面板</span>
+              </button>
+            )}
+            {/* M3 T10: focus stats entry. */}
+            <button
+              type="button"
+              role="menuitem"
+              className="overflow-item"
+              onClick={() => setStatsOpen(true)}
+              aria-pressed={statsOpen}
+            >
+              <Timer size={14} aria-hidden="true" />
+              <span>专注统计</span>
+            </button>
+          </div>
+        )}
         {perfOpen && (
           <div className="perf-panel" role="dialog" aria-label="Performance settings">
             <PerfSettings
@@ -1542,87 +1698,27 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             )}
           </div>
         )}
-        <div className="peers">Peers: {peerCount}</div>
-        {/* MW1: key hints are desktop-only; touch uses TouchActionBar/PttButton. */}
-        {!isCoarsePointer && (
+      </div>
+      {/* Contextual UI §2: bottom action bar. Media buttons exist only in the
+          meeting suite (suite 1); the bar is empty when idle. */}
+      <ContextActionBar
+        state={{
+          seated,
+          nearbyBoardIndex,
+          nearbyNoteIndex,
+          nearbyTable,
+          nearbyPersonIdentity: nearbyPerson,
+          silentZone: zoneKind === "silent",
+        }}
+        isTouch={isCoarsePointer}
+        touchAction={touchAction}
+        onTouchAction={handleTouchAction}
+        showMoveHint={!moveHintSeen}
+        meetingControls={
           <>
-            {seated ? (
-              <div className="peers">
-                Seated at <strong>{self.tableId}</strong> — press{" "}
-                <span className="key">E</span> to leave
-              </div>
-            ) : nearbyTable ? (
-              <div className="peers">
-                Press <span className="key">E</span> to join{" "}
-                <strong>{nearbyTable}</strong>
-              </div>
-            ) : (
-              <div className="peers">
-                Move: <span className="key">W</span><span className="key">A</span>
-                <span className="key">S</span><span className="key">D</span> /
-                arrow keys
-              </div>
-            )}
-            {nearbyNoteIndex != null && (
-              <div className="peers">
-                Press <span className="key">F</span> to read note
-              </div>
-            )}
-            {nearbyBoardIndex != null && (
-              <div className="peers">
-                Press <span className="key">F</span> to open board
-              </div>
-            )}
-            {/* P1-C: whiteboard hint, discussion zones only. */}
-            {zoneKind === "discussion" && wbZoneId == null && (
-              <div className="peers">
-                Press <span className="key">B</span> for the shared whiteboard
-              </div>
-            )}
-          </>
-        )}
-        {zoneKind === "silent" && (
-          <div className="peers">
-            Silent zone —{" "}
-            {isCoarsePointer ? (
-              <>hold the talk button to speak</>
-            ) : (
-              <>hold <span className="key">Space</span> to talk</>
-            )}
-          </div>
-        )}
-        {micDenied && (
-          <div className="perm-banner" role="alert">
-            <MicOff size={14} aria-hidden="true" />
-            <span>Mic blocked or no input device.</span>{" "}
             <button
               type="button"
-              className="perm-banner-action"
-              onClick={() => {
-                // Clear latch + unmute so the publish effect re-prompts.
-                setMicDenied(false);
-                setUserMuted(false);
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-        {/* MW1-3: touch contextual action (F/E equivalent) + hold-to-talk.
-            Both render only on coarse pointers (internal mount gate). */}
-        <TouchActionBar action={touchAction} onAction={handleTouchAction} />
-        <PttButton
-          visible={zoneKind === "silent"}
-          onHoldStart={pttHoldStart}
-          onHoldEnd={pttHoldEnd}
-        />
-        {/* M3 T11: sit ritual. One-tap focus entry while seated and the
-            pomodoro is idle. Fixed-position card, touch-friendly buttons. */}
-        {seated && pomodoroPhase === "idle" && <SitFocusPrompt />}
-      </div>
-      <button
-        type="button"
-        className={`mic-toggle${micActive ? " on" : " off"}`}
+              className={`mic-toggle${micActive ? " on" : " off"}`}
         onClick={() => {
           // Clicking the button when blocked acts as "retry": clear the
           // latch and un-mute so the next render re-attempts permission.
@@ -1700,30 +1796,6 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         {sharingScreen ? <MonitorOff size={14} aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
         <span>{sharingScreen ? "Stop share" : "Share screen"}</span>
       </button>
-      {/* P1-C: whiteboard entry. Desktop-only (mobile uses the FAB below);
-          visible only inside discussion zones (contract §3 — the open
-          button is hidden elsewhere). */}
-      {zoneKind === "discussion" && wbZoneId == null && !isCoarsePointer && (
-        <button
-          type="button"
-          className="wb-toggle"
-          onClick={openWhiteboard}
-          title="Open the shared whiteboard for this discussion zone (B)"
-          aria-label="Open whiteboard"
-        >
-          <PenLine size={14} aria-hidden="true" />
-          <span>Whiteboard</span>
-          <span className="key" style={{ marginLeft: 6 }}>B</span>
-        </button>
-      )}
-      <MobileDrawer
-        open={videoOpen}
-        onClose={() => setVideoOpen(false)}
-        side="bottom"
-        title="Video"
-      >
-        <VideoTiles room={room} />
-      </MobileDrawer>
       <button
         type="button"
         className="meeting-toggle"
@@ -1738,14 +1810,57 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         <MeetingIcon />
         Meeting view
       </button>
-      <button
-        className="disconnect"
-        onClick={() => {
-          void room.disconnect().finally(onLeave);
-        }}
+            {/* Leave lives in the meeting suite while seated; no leave
+                button is shown otherwise (contextual UI §2). */}
+            <button
+              className="disconnect"
+              onClick={() => {
+                void room.disconnect().finally(onLeave);
+              }}
+            >
+              Leave
+            </button>
+          </>
+        }
+        objectControls={
+          /* P1-C: whiteboard entry, now in the object suite. Desktop-only
+             (mobile uses the FAB below); visible only inside discussion
+             zones (contract §3 — the open button is hidden elsewhere). */
+          zoneKind === "discussion" && wbZoneId == null && !isCoarsePointer ? (
+            <button
+              type="button"
+              className="wb-toggle"
+              onClick={openWhiteboard}
+              title="Open the shared whiteboard for this discussion zone (B)"
+              aria-label="Open whiteboard"
+            >
+              <PenLine size={14} aria-hidden="true" />
+              <span>Whiteboard</span>
+              <span className="key" style={{ marginLeft: 6 }}>B</span>
+            </button>
+          ) : null
+        }
+        personCard={
+          nearbyPerson ? (
+            <PersonCard
+              identity={nearbyPerson}
+              name={nearbyPeer?.name ?? nearbyPerson.slice(0, 6)}
+              color={nearbyPeer?.color}
+              roomName={roomName}
+              backendUrl={cache?.backendUrl ?? ""}
+              getToken={() => cache?.session.token ?? ""}
+            />
+          ) : null
+        }
+      />
+      <MobileDrawer
+        open={videoOpen}
+        onClose={() => setVideoOpen(false)}
+        side="bottom"
+        title="Video"
       >
-        Leave
-      </button>
+        <VideoTiles room={room} />
+      </MobileDrawer>
       <button
         type="button"
         className={`chat-toggle${chatOpen ? " open" : ""}`}
