@@ -227,9 +227,10 @@ export function SpatialCanvas({
       ctx.fillStyle = voidGrad;
       ctx.fillRect(0, 0, w, h);
 
-      // Floor: pixel-art tile pattern if the walls sheet has loaded, else
-      // a bitmap background image if the map declares one, else solid
-      // color + procedural grid.
+      // Floor: a bitmap background image when the map declares one (painted
+      // mode — smoothing ON for hand-drawn art), else the pixel-art tile
+      // pattern if the walls sheet has loaded, else solid color +
+      // procedural grid.
       const bg = bgRef.current;
       const wallsSheet = sheetsRef.current.walls;
       const floorX = map.bounds.x * vp.scale + vp.offsetX;
@@ -237,7 +238,11 @@ export function SpatialCanvas({
       const floorW = map.bounds.width * vp.scale;
       const floorH = map.bounds.height * vp.scale;
       ctx.imageSmoothingEnabled = false;
-      if (wallsSheet) {
+      if (bg) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(bg, floorX, floorY, floorW, floorH);
+        ctx.imageSmoothingEnabled = false;
+      } else if (wallsSheet) {
         // Build the pattern lazily and rebuild when scale changes. We blit
         // the FLOOR_TILE rect onto a small offscreen canvas at the
         // current screen-pixel tile size, then turn that into a repeating
@@ -273,8 +278,6 @@ export function SpatialCanvas({
           ctx.fillStyle = map.backgroundColor;
           ctx.fillRect(floorX, floorY, floorW, floorH);
         }
-      } else if (bg) {
-        ctx.drawImage(bg, floorX, floorY, floorW, floorH);
       } else {
         ctx.fillStyle = map.backgroundColor;
         ctx.fillRect(floorX, floorY, floorW, floorH);
@@ -305,12 +308,14 @@ export function SpatialCanvas({
       // Procedural objects (walls, tables, chairs, plants, ...) — only when
       // the map authored them. Legacy painted maps fall back to the debug
       // walkable outlines so authors can still see the collision rects.
-      // In tileVisual mode with a ready tile layer, drawObjects skips the
-      // procedural bodies the tiles already show (but keeps rings, zone
-      // tints, board/door/portal overlays).
+      // In tileVisual mode with a ready tile layer, or in painted-background
+      // mode (the bitmap already shows the furniture), drawObjects skips the
+      // procedural bodies the artwork already shows (but keeps rings, zone
+      // label chips, board/door/portal overlays).
+      const paintedBg = !!map.backgroundImage && !!bg;
       const occupancy = computeOccupancy(state);
       if (map.objects.length > 0) {
-        drawObjects(ctx, map, vp, occupancy, highlightRef.current, highlightNoteRef.current, sheetsRef.current, tileLayerReady);
+        drawObjects(ctx, map, vp, occupancy, highlightRef.current, highlightNoteRef.current, sheetsRef.current, tileLayerReady || paintedBg, paintedBg);
       } else {
         drawDebugWalkable(ctx, map, vp);
         // Legacy table outlines (procedural path draws them in drawObjects).
@@ -515,6 +520,10 @@ function drawObjects(
    *  skip procedural bodies for types the tiles already show. Rings,
    *  zone tints and board/door/portal overlays are preserved. */
   skipBodies = false,
+  /** Painted-background mode: the bitmap already shows walls/furniture.
+   *  Zones draw only their label chip (no tint fill or dashed border) so
+   *  the artwork stays clean. */
+  paintedBg = false,
 ) {
   // Two-pass: zones first (so dashed borders sit under solid objects), then
   // everything else in author order. Index is preserved so the note-highlight
@@ -548,7 +557,7 @@ function drawObjects(
       if (rect && sheet && sheet.complete && sheet.naturalWidth > 0) {
         drawSpriteObject(ctx, obj, x, y, w, h, count, isHighlighted, rect, sheet);
       } else {
-        drawObject(ctx, obj, x, y, w, h, count, isHighlighted, vp.scale);
+        drawObject(ctx, obj, x, y, w, h, count, isHighlighted, vp.scale, paintedBg);
       }
     }
   }

@@ -29,6 +29,9 @@ export function drawObject(
   occupantCount: number,
   isHighlighted: boolean,
   scale: number = 1,
+  /** Painted-background mode: the bitmap already shows the zone's look —
+   *  draw only the label chip, no tint fill or dashed border. */
+  paintedBg: boolean = false,
 ): void {
   const elevPx =
     (obj.elevation ?? DEFAULT_ELEVATIONS[obj.type] ?? 0) * scale;
@@ -184,15 +187,19 @@ export function drawObject(
     case "zone": {
       // Non-solid named area. Soft tint + dashed border so it visually
       // recedes behind solid objects. Label rendered as a chip at the top-
-      // left corner — easy to read regardless of zoom.
-      const tint = obj.color ?? "rgba(0, 122, 255, 0.10)";
-      ctx.fillStyle = tint;
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = "rgba(0, 122, 255, 0.55)";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
-      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-      ctx.setLineDash([]);
+      // left corner — easy to read regardless of zoom. In painted-background
+      // mode the artwork already communicates the zone, so only the chip
+      // is drawn.
+      if (!paintedBg) {
+        const tint = obj.color ?? "rgba(0, 122, 255, 0.10)";
+        ctx.fillStyle = tint;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = "rgba(0, 122, 255, 0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+        ctx.setLineDash([]);
+      }
       if (obj.label && obj.label.length > 0) {
         const fontSize = 12;
         ctx.font = `600 ${fontSize}px system-ui`;
@@ -251,19 +258,23 @@ export function drawObject(
     case "board": {
       // Notice-board sprite: cork-textured fill with two "tacks" + a label
       // chip indicating the repo. Walkable. F-to-interact when nearby.
-      const fill = obj.color ?? "#8a5a2b";
-      ctx.fillStyle = fill;
-      roundRect(ctx, x, y, w, h, 4);
-      ctx.fill();
-      ctx.strokeStyle = "rgba(40, 24, 8, 0.9)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      // Tacks
-      for (const tx of [x + 8, x + w - 8]) {
-        ctx.beginPath();
-        ctx.arc(tx, y + 8, 3, 0, Math.PI * 2);
-        ctx.fillStyle = "#d63a3a";
+      // In painted-background mode the artwork already shows the board —
+      // draw only the label chip and the proximity highlight ring.
+      if (!paintedBg) {
+        const fill = obj.color ?? "#8a5a2b";
+        ctx.fillStyle = fill;
+        roundRect(ctx, x, y, w, h, 4);
         ctx.fill();
+        ctx.strokeStyle = "rgba(40, 24, 8, 0.9)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Tacks
+        for (const tx of [x + 8, x + w - 8]) {
+          ctx.beginPath();
+          ctx.arc(tx, y + 8, 3, 0, Math.PI * 2);
+          ctx.fillStyle = "#d63a3a";
+          ctx.fill();
+        }
       }
       if (isHighlighted) {
         const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 250);

@@ -39,6 +39,18 @@ if (!existsSync(spritesSrc)) {
 await cp(spritesSrc, spritesDst, { recursive: true });
 console.log(`[sync-assets] sprites/ -> public/sprites/`);
 
+// Painted map backgrounds (mirrors `assets/backgrounds/` 1:1 so
+// `library-painted.jpg` resolves under `/backgrounds/library-painted.jpg`).
+// Optional like templates/: a missing dir is a skip, not an error.
+const backgroundsSrc = resolve(assetsDir, "backgrounds");
+const backgroundsDst = resolve(publicDir, "backgrounds");
+if (!existsSync(backgroundsSrc)) {
+  console.log(`[sync-assets] no backgrounds dir, skipping`);
+} else {
+  await cp(backgroundsSrc, backgroundsDst, { recursive: true });
+  console.log(`[sync-assets] backgrounds/ -> public/backgrounds/`);
+}
+
 // P1-A map templates (contracts.md "Map templates"). Optional: template
 // authors create assets/templates/ later, so a missing dir is a skip, not
 // an error (unlike map_config.json / sprites above).

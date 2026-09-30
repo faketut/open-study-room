@@ -408,7 +408,7 @@ describe("validateTemplate: tilegrid (contracts.md Pixel-art tilemap §2)", () =
     expect(validateTemplate(bad).errors.join("\n")).toMatch(/deco/);
   });
 
-  it("validates the real library.json tilemap with zero errors", async () => {
+  it("validates the real library.json (painted background) with zero errors", async () => {
     // @ts-expect-error node:fs has no type declarations here (@types/node absent)
     const { readFileSync } = await import("node:fs");
     // @ts-expect-error node:path has no type declarations here (@types/node absent)
@@ -421,13 +421,14 @@ describe("validateTemplate: tilegrid (contracts.md Pixel-art tilemap §2)", () =
     );
     const { errors, warnings } = validateTemplate(raw);
     expect(errors).toEqual([]);
-    // Sanity on the authoring: 8 tables / 44 chairs, 55×40 grid.
+    // Painted-background mode: no tilegrid; logic layer only.
+    // 9 tables / 33 chairs measured from the painted artwork.
     const objs = raw.objects as Array<{ type: string }>;
-    expect(objs.filter((o) => o.type === "table").length).toBe(8);
-    expect(objs.filter((o) => o.type === "chair").length).toBe(44);
-    expect(raw.tilegrid.cols).toBe(55);
-    expect(raw.tilegrid.rows).toBe(40);
-    expect(raw.tilegrid.grid.length).toBe(2200);
+    expect(objs.filter((o) => o.type === "table").length).toBe(9);
+    expect(objs.filter((o) => o.type === "chair").length).toBe(33);
+    expect(raw.tilegrid).toBeUndefined();
+    expect(raw.tileVisual).toBe(false);
+    expect(raw.background_image).toBe("backgrounds/library-painted.jpg");
     expect(warnings.join("\n")).not.toMatch(/overcrowded/);
   });
 });

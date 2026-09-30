@@ -1927,3 +1927,85 @@ Cocoon: zoom + vignette on sit, restore on stand, reduced-motion safe.
 Tests: new seating/queue/camera suites + template validation green + all
 existing green. Out of scope: other four templates, `demo.mp4` re-record,
 server-side seat arbitration.
+
+## Painted background replaces tilemap for `library` (2026-09-30)
+
+Supersedes the "Pixel-art tilemap" §2–§3 for the `library` template only.
+The tilemap (Tilation) remains in the repo for other templates; `library`
+now uses a single AI-generated hand-painted background image.
+
+### 1. Painted background asset
+
+- File: `assets/backgrounds/library-painted.jpg` (JPEG, quality 88,
+  619,375 bytes). Generated 2026-09-30 from a 1760×1280 (2×) PNG master
+  (SHA-256 `0aafec57f10976192c3337692d2c853c65b9f77cb5cc2534b8fada1bee9ed5c2`).
+- The 1760×1280 image maps 1:1 onto the 880×640 world (2× resolution).
+- Original AI-generation snapshot: `e5318e92-c279-4c8d-bb71-21947ce8b26f:3z0hjn`.
+- Served at `/backgrounds/library-painted.jpg` (copied by
+  `web/scripts/sync-assets.mjs` from `assets/backgrounds/`).
+
+### 2. Template format (painted mode)
+
+A template opts into painted-background rendering with:
+
+```json
+"background_image": "backgrounds/library-painted.jpg",
+"tileVisual": false
+```
+
+- `background_image`: path relative to `/` (served from `web/public/`).
+  When present and loaded, the renderer draws it with `drawImage` as the
+  base layer (with `imageSmoothingEnabled = true` for the blit only).
+- `tileVisual: false` + **no `tilegrid`**: the visual layer is the painted
+  image; the JSON `objects` array is the *logic* layer only (collision,
+  zones, sit targets, interaction).
+- **Layer separation (normative).** Positions of logical objects must match
+  the artwork beneath them (authoring rule, verified by visual review +
+  flood-fill reachability check). The validator (Q1–Q10) and all gameplay
+  logic are unchanged.
+- Renderer skips procedural drawing for
+  `wall | table | desk | chair | cabinet | plant | rug` (the painting shows
+  them) but keeps them for collision/logic. `zone` draws label chip only
+  (no tint/border). `board` draws label chip + proximity highlight only
+  (no cork body — the painting has the whiteboard). `door` draws the
+  dashed marker only. Table highlight/occupancy rings still draw.
+
+### 3. Library layout (painted, replaces §3 tile numbers)
+
+880×640 world. Five zones, nine tables, 33 chairs (measured from the
+artwork, not the old tilemap):
+
+| Zone | Kind | World rect |
+|---|---|---|
+| Reading Hall (north) | silent | x 16–864, y 16–256 |
+| Corridor | rest | x 16–864, y 272–320 |
+| Lounge (southwest) | rest | x 16–400, y 320–624 |
+| Lobby (southeast-center) | rest | x 400–608, y 320–624 |
+| Discussion Corner (east) | discussion | x 608–864, y 320–624 |
+
+- **Reading hall**: 6 tables / 21 chairs (three 2×1 north incl. one 4×2
+  long, three south). Bookshelf dividers with central passage.
+- **Discussion corner**: whiteboard (`board` at x 803, y 422, 52×98) on
+  the east wall, one round table + 4 chairs.
+- **Lounge**: two square tables + 8 chairs, plants, daybeds.
+- **Lobby**: entrance door gap in the south wall (x 420–500), 2 spawn
+  points at (420,560) and (500,560).
+- **Circulation**: all chairs/whiteboard/door/zones reachable (flood-fill
+  verified). Chair→table assignment by nearest table.
+
+### 4. Unchanged from tilemap section
+
+Click/tap-to-sit (§4), full-house queue + overflow (§5), focus cocoon (§6),
+and test coverage all carry over unchanged. The `mapTemplate.test.ts`
+library assertion now expects 9 tables / 33 chairs, `tileVisual: false`,
+`background_image` set, and no `tilegrid`.
+
+### Self-consistency checklist
+
+Asset: JPEG in `assets/backgrounds/` + copied to `web/public/backgrounds/`.
+Template: `library.json` has `background_image`, no `tilegrid`, 84 objects
+(5 zones, 5 walls, 9 tables, 33 chairs, 20 cabinets, 10 plants, 1 board,
+1 door). Renderer: bg `drawImage` + skip covered bodies + chip-only
+zones/boards. Tests: 463/463 green. Visual: browser screenshot verified
+(bg, whiteboard chip, click-to-sit). Out of scope: other four templates,
+`demo.mp4` re-record, server-side seat arbitration.

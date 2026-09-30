@@ -9,3 +9,4 @@ public/sprites/
 *.tsbuildinfo
 .DS_Store
 public/templates/
+public/backgrounds/
