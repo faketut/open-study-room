@@ -41,7 +41,7 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
-/** Focus cocoon (contracts.md "Pixel-art tilemap" §6): a zoomed variant of
+/** Focus cocoon (contracts.md "Painted background" §4): a zoomed variant of
  *  `computeViewport` that pushes the camera toward `zoom`× centered on
  *  `focusPos` (the seated table), clamped at map edges like the base
  *  viewport. Pure — the render loop lerps a live multiplier toward the

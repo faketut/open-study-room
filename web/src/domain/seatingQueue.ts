@@ -1,5 +1,5 @@
 /**
- * Full-house queue (contracts.md "Pixel-art tilemap" §5).
+ * Full-house queue (contracts.md "Painted background" §4).
  *
  * Per-client FIFO queue for the reading hall. Pure state machine —
  * the UI layer feeds it presence updates and renders toasts/dialogs.

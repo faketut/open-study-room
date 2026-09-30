@@ -3716,7 +3716,7 @@ button.whos-where-avatar {
   white-space: nowrap;
 }
 
-/* Full-house dialog (contracts.md "Pixel-art tilemap" §5). Centered modal
+/* Full-house dialog (contracts.md "Painted background" §4). Centered modal
  * over the canvas; buttons ≥56px for touch. */
 .fullhouse-overlay {
   position: absolute;

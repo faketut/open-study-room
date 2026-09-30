@@ -1,4 +1,4 @@
-// Full-house dialog (contracts.md "Pixel-art tilemap" §5).
+// Full-house dialog (contracts.md "Painted background" §4).
 //
 // Shown when the user tries to sit in the reading hall while it is full.
 // Three English-only actions: join the per-client FIFO queue, overflow to

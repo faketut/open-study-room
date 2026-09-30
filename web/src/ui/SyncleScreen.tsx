@@ -501,7 +501,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     title: string;
     body: string;
   } | null>(null);
-  // Pixel-art seating flow (contracts.md "Pixel-art tilemap" §4–§5).
+  // Seating flow (contracts.md "Painted background" §4).
   const [fullHouseOpen, setFullHouseOpen] = useState(false);
   const [queuePos, setQueuePos] = useState(0);
   const [seatToast, setSeatToast] = useState<{ title: string; body: string } | null>(null);
@@ -524,7 +524,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     }, 6000);
   }, []);
 
-  // Full-house dialog actions (contracts.md "Pixel-art tilemap" §5).
+  // Full-house dialog actions (contracts.md "Painted background" §4).
   const handleQueueJoin = useCallback(() => {
     const pos = queueEnqueue(queueRef.current, LOCAL_CHAT_IDENTITY, Date.now());
     if (pos > 0) setQueuePos(pos);
@@ -843,7 +843,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     }
   }, [chatOpen]);
 
-  // Pixel-art seating flow (contracts.md "Pixel-art tilemap" §4–§5): the
+  // Seating flow (contracts.md "Painted background" §4): the
   // single entry point for sitting. Shared by the E key, the touch action
   // bar, and click/tap on a chair. Full tables (or a full reading hall)
   // open the full-house dialog instead of sitting.
@@ -1575,7 +1575,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     if (!chair) return null;
     return chairTableId(chair, m.tables);
   }, []);
-  // Pixel-art seating flow §4: desktop click on a chair sits at its table.
+  // Seating flow (contracts.md "Painted background" §4): desktop click on a chair sits at its table.
   // (Coarse pointers use the tap path below so tap-to-move keeps working.)
   const onCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (isCoarsePointer) return;
@@ -2215,7 +2215,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         </MobileDrawer>
       )}
       <ReconnectOverlay onRetry={onRetryReconnect} />
-      {/* Pixel-art seating flow §5: full-house dialog + seating toasts. */}
+      {/* Seating flow (contracts.md "Painted background" §4): full-house dialog + seating toasts. */}
       {fullHouseOpen && (
         <FullHouseDialog
           queued={queuePos > 0}

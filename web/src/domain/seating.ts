@@ -1,5 +1,5 @@
 /**
- * Seating domain (contracts.md "Pixel-art tilemap" §4–§5).
+ * Seating domain (contracts.md "Painted background" §4).
  *
  * Pure logic for click/tap-to-sit and the full-house policy. The client-side
  * seat source of truth is presence-based: occupancy = self + peers whose
