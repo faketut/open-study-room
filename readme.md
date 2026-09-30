@@ -87,17 +87,24 @@ into `web/public/` by `npm run sync-assets` (runs automatically via
 
 ## Demo
 
-A 42-second screen recording of two users in the library template: joining,
-walking to the discussion corner, sitting at a table, and starting a focus
-session. Recorded locally with the real stack (LiveKit `--dev` + Node server +
-production web build, driven by Playwright).
+A 40-second screen recording of a single user in the library template: joining,
+walking around, sitting at table-b2 (E), starting a focus session, then walking
+to the Discussion Corner and opening the shared whiteboard (B). Recorded locally
+with the real stack (LiveKit `--dev` + Node server + production web build,
+driven by Playwright).
+
+<video src="docs/demo.mp4" poster="docs/demo-poster.png" controls width="640">
+  <a href="docs/demo.mp4">Watch the demo (docs/demo.mp4)</a>
+</video>
 
 📹 [Watch the demo (docs/demo.mp4)](docs/demo.mp4)
 
-> **Note**: recorded in a sandboxed environment without UDP. WebRTC ICE could
-> not establish (LiveKit's TCP mux did not service inbound connections), so
-> peer position sync via data channel is not visible; the UI journey itself is
-> real. The whiteboard open was flaky under automation and is not shown.
+> **Note**: single-user recording. Two-user real-time sync is not demonstrated —
+> this sandbox blocks the UDP/WebRTC ICE path LiveKit needs for peer data
+> channels, so only one client is shown. The whiteboard panel opens for real,
+> but Excalidraw's canvas hits a headless-GPU rendering glitch in this VM, so
+> the drawn stroke isn't visible. The UI journey itself (join → walk → sit →
+> focus → whiteboard open) is real.
 
 ## Tests
 
