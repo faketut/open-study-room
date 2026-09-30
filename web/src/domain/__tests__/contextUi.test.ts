@@ -4,6 +4,7 @@ import {
   contextSuiteFor,
   desktopHintFor,
   nearestPeerWithinRadius,
+  shouldShowMicWarning,
   touchActionFor,
   type ContextState,
 } from "../contextUi";
@@ -116,9 +117,9 @@ describe("touch/desktop parity", () => {
   });
 
   it("desktopHintFor 只给有按键的套装返回提示", () => {
-    expect(desktopHintFor("meeting")).toEqual({ key: "E", label: "起身" });
-    expect(desktopHintFor("object")).toEqual({ key: "F", label: "打开" });
-    expect(desktopHintFor("sit")).toEqual({ key: "E", label: "坐下" });
+    expect(desktopHintFor("meeting")).toEqual({ key: "E", label: "Stand up" });
+    expect(desktopHintFor("object")).toEqual({ key: "F", label: "Open" });
+    expect(desktopHintFor("sit")).toEqual({ key: "E", label: "Sit down" });
     expect(desktopHintFor("person")).toBeNull();
     expect(desktopHintFor("idle")).toBeNull();
   });
@@ -158,5 +159,30 @@ describe("nearestPeerWithinRadius", () => {
     const peers = [{ identity: "p", x: 50, y: 0 }];
     expect(nearestPeerWithinRadius(0, 0, peers, 40)).toBeNull();
     expect(nearestPeerWithinRadius(0, 0, peers, 60)?.identity).toBe("p");
+  });
+});
+
+describe("shouldShowMicWarning (UI refinements §2)", () => {
+  it("hidden when mic is not denied", () => {
+    expect(shouldShowMicWarning(false, "discussion", false)).toBe(false);
+    expect(shouldShowMicWarning(false, "silent", true)).toBe(false);
+  });
+  it("hidden in silent zone when just studying (denied, no attempt)", () => {
+    expect(shouldShowMicWarning(true, "silent", false)).toBe(false);
+  });
+  it("hidden outside zones when just studying (denied, no attempt)", () => {
+    expect(shouldShowMicWarning(true, "none", false)).toBe(false);
+  });
+  it("shown in discussion zone when denied", () => {
+    expect(shouldShowMicWarning(true, "discussion", false)).toBe(true);
+  });
+  it("shown in rest zone when denied", () => {
+    expect(shouldShowMicWarning(true, "rest", false)).toBe(true);
+  });
+  it("shown after an unmute attempt even in silent zone", () => {
+    expect(shouldShowMicWarning(true, "silent", true)).toBe(true);
+  });
+  it("shown after an unmute attempt outside zones", () => {
+    expect(shouldShowMicWarning(true, "none", true)).toBe(true);
   });
 });

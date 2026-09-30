@@ -67,14 +67,14 @@ export function PersonCard({
     blockIdentity(roomName, identity);
     setArming(null);
     setBlockVersion((v) => v + 1);
-    setToast(`已屏蔽 ${name}（本地生效，对方不会收到通知）`);
+    setToast(`Blocked ${name} (local only; they will not be notified)`);
   }
 
   function handleUnblock() {
     unblockIdentity(roomName, identity);
     setArming(null);
     setBlockVersion((v) => v + 1);
-    setToast(`已取消屏蔽 ${name}`);
+    setToast(`Unblocked ${name}`);
   }
 
   async function submitReport(reason: ReportReason, detail: string) {
@@ -84,15 +84,15 @@ export function PersonCard({
         reason,
         detail: detail.trim().length > 0 ? detail.trim() : undefined,
       });
-      setToast("举报已提交，房主会进行审核。");
+      setToast("Report submitted. The host will review it.");
     } catch (err) {
-      setToast(`举报失败：${describeReportError(err)}`);
+      setToast(`Report failed: ${describeReportError(err)}`);
     }
     setReportOpen(false);
   }
 
   return (
-    <div className="person-card" role="group" aria-label={`附近的人：${name}`}>
+    <div className="person-card" role="group" aria-label={`Nearby person: ${name}`}>
       <span
         className="person-card-dot"
         style={{ background: color ?? "#5AC8FA" }}
@@ -108,7 +108,7 @@ export function PersonCard({
             else setArming("unblock");
           }}
         >
-          {arming === "unblock" ? "确认取消屏蔽？" : "取消屏蔽"}
+          {arming === "unblock" ? "Confirm unblock?" : "Unblock"}
         </button>
       ) : (
         <button
@@ -119,7 +119,7 @@ export function PersonCard({
             else setArming("block");
           }}
         >
-          {arming === "block" ? "确认屏蔽？" : "屏蔽"}
+          {arming === "block" ? "Confirm block?" : "Block"}
         </button>
       )}
       <button
@@ -127,7 +127,7 @@ export function PersonCard({
         className="person-card-btn"
         onClick={() => setReportOpen(true)}
       >
-        举报
+        Report
       </button>
       {toast && (
         <span className="person-card-toast" role="status">

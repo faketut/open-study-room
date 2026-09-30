@@ -15,10 +15,10 @@ export type { ZoneKind };
 /** Sidebar/grouping label per kind. `none` only occurs for avatars outside
  *  every zone (e.g. the "Roaming" row), never for authored zones. */
 export const ZONE_KIND_LABELS: Record<ZoneKind, string> = {
-  silent: "自习区",
-  discussion: "讨论区",
-  rest: "休息区",
-  none: "漫游",
+  silent: "Reading Hall",
+  discussion: "Discussion Corner",
+  rest: "Lounge",
+  none: "Roaming",
 };
 
 /** Authored zone kinds — the values a map JSON or the editor may assign.

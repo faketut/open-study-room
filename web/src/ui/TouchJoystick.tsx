@@ -85,7 +85,7 @@ export function TouchJoystick({ onVector, disabled = false }: TouchJoystickProps
   return (
     <div
       ref={baseRef}
-      aria-label="移动摇杆"
+      aria-label="Move joystick"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={release}

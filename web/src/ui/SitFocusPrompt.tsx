@@ -24,7 +24,7 @@ export function SitFocusPrompt() {
       // (it only logs), so detect the failure via the phase: still idle
       // means the session never started.
       if (usePomodoroStore.getState().phase === "idle") {
-        setError("开始失败，请检查网络后重试。");
+        setError("Failed to start. Check your connection and retry.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -34,26 +34,26 @@ export function SitFocusPrompt() {
   }
 
   return (
-    <div className="sit-focus-prompt" role="group" aria-label="开始专注">
-      <div className="sit-focus-prompt-title">已入座 · 来段专注？</div>
+    <div className="sit-focus-prompt" role="group" aria-label="Start focus">
+      <div className="sit-focus-prompt-title">Seated · Start a focus session?</div>
       <div className="sit-focus-prompt-actions">
         <button
           type="button"
           className="sit-focus-btn primary"
           disabled={starting}
           onClick={() => void start("focus", 25)}
-          aria-label="开始 25 分钟专注"
+          aria-label="Start a 25-minute focus session"
         >
-          🍅 开始专注 25′
+          🍅 Start focus 25′
         </button>
         <button
           type="button"
           className="sit-focus-btn"
           disabled={starting}
           onClick={() => void start("break", 5)}
-          aria-label="开始 5 分钟休息"
+          aria-label="Start a 5-minute break"
         >
-          ☕ 休息 5′
+          ☕ Break 5′
         </button>
       </div>
       {error != null && (

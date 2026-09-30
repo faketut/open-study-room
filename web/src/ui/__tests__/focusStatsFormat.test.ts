@@ -5,30 +5,30 @@ import { describe, expect, it } from "vitest";
 import {
   barHeights,
   formatBarDayLabel,
-  formatDurationZh,
+  formatDuration,
 } from "../focusStatsFormat";
 
-describe("formatDurationZh", () => {
+describe("formatDuration", () => {
   it("formats minutes under an hour", () => {
-    expect(formatDurationZh(1500)).toBe("25分");
-    expect(formatDurationZh(59)).toBe("0分");
-    expect(formatDurationZh(60)).toBe("1分");
+    expect(formatDuration(1500)).toBe("25m");
+    expect(formatDuration(59)).toBe("0m");
+    expect(formatDuration(60)).toBe("1m");
   });
 
   it("formats hours without trailing zero minutes", () => {
-    expect(formatDurationZh(3600)).toBe("1小时");
-    expect(formatDurationZh(7200)).toBe("2小时");
+    expect(formatDuration(3600)).toBe("1h");
+    expect(formatDuration(7200)).toBe("2h");
   });
 
   it("formats hours with leftover minutes", () => {
-    expect(formatDurationZh(3661)).toBe("1小时1分");
-    expect(formatDurationZh(2 * 3600 + 15 * 60)).toBe("2小时15分");
+    expect(formatDuration(3661)).toBe("1h 1m");
+    expect(formatDuration(2 * 3600 + 15 * 60)).toBe("2h 15m");
   });
 
   it("rounds down and clamps negatives", () => {
-    expect(formatDurationZh(90.9)).toBe("1分");
-    expect(formatDurationZh(0)).toBe("0分");
-    expect(formatDurationZh(-100)).toBe("0分");
+    expect(formatDuration(90.9)).toBe("1m");
+    expect(formatDuration(0)).toBe("0m");
+    expect(formatDuration(-100)).toBe("0m");
   });
 });
 

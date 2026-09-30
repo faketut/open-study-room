@@ -67,7 +67,7 @@ export function ContextActionBar({
         <div className="ctx-hints">
           {showMoveHint ? (
             <span className="ctx-hint">
-              {isTouch ? "拖动左下摇杆移动" : "WASD / 方向键移动"}
+              {isTouch ? "Drag the bottom-left joystick to move" : "WASD / arrow keys to move"}
             </span>
           ) : (
             hint != null &&
@@ -80,7 +80,7 @@ export function ContextActionBar({
           )}
           {pttHint && (
             <span className="ctx-hint">
-              <span className="key">Space</span>说话
+              <span className="key">Space</span>talk
             </span>
           )}
         </div>

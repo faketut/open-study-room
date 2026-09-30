@@ -69,6 +69,7 @@ import {
 import {
   NEARBY_PERSON_RADIUS,
   nearestPeerWithinRadius,
+  shouldShowMicWarning,
 } from "../domain/contextUi";
 import { computeViewport } from "../domain/camera";
 import {
@@ -261,6 +262,11 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // Ref so the keydown closure (registered once) can read the current value.
   const micDeniedRef = useRef(false);
   useEffect(() => { micDeniedRef.current = micDenied; }, [micDenied]);
+  /** UI refinements §2: sticky flag set when the user attempts to unmute
+   *  (mic toggle button or M key) while the mic is denied. Drives the
+   *  contextual mic-blocked banner: the banner shows when denied AND
+   *  (in discussion/rest zone OR the user tried to use the mic). */
+  const [micAttempted, setMicAttempted] = useState(false);
   /** M1: zone kind of the local avatar ("none" outside any zone). Updated
    *  by the game loop only on boundary crossings; drives the mic state
    *  machine, PTT, publish gates, and spatial-audio scoping. */
@@ -351,6 +357,9 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
    *  the remembered intent so leaving the zone restores what the user last
    *  asked for. */
   const toggleUserMuted = () => {
+    // Any explicit unmute attempt marks the mic as "attempted" so the
+    // contextual blocked banner can show retry feedback (UI refinements §2).
+    setMicAttempted(true);
     if (micDeniedRef.current) {
       setMicDenied(false);
       setUserMuted(false);
@@ -607,8 +616,8 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       const wasBreak = prev.kind === "break";
       setFocusToast(
         wasBreak
-          ? { title: "休息结束", body: "休息时间到，回来继续专注吧" }
-          : { title: "专注完成", body: "本次专注完成，要不要休息一下？" },
+          ? { title: "Break over", body: "Break time is up — back to focus." }
+          : { title: "Focus complete", body: "Focus session done. Take a break?" },
       );
     }
   }, [pomodoroPhase, pomodoroKind]);
@@ -1527,23 +1536,28 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         </div>
         {/* Contextual UI §2: key hints moved into ContextActionBar (one hint
             per active suite, plus the one-time movement hint). */}
-        {micDenied && (
+        {/* UI refinements §2: the mic-blocked banner is contextual, not
+            persistent. It shows only when the mic is denied AND (the user
+            is in a discussion/rest zone where the mic matters, OR they
+            attempted to unmute). In silent zones while just studying it
+            stays hidden; the top-left keeps only the minimal status pill. */}
+        {shouldShowMicWarning(micDenied, zoneKind, micAttempted) && (
           <div className="perm-banner" role="alert">
-            <MicOff size={14} aria-hidden="true" />
-            <span>Mic blocked or no input device.</span>{" "}
-            <button
-              type="button"
-              className="perm-banner-action"
-              onClick={() => {
-                // Clear latch + unmute so the publish effect re-prompts.
-                setMicDenied(false);
-                setUserMuted(false);
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        )}
+              <MicOff size={14} aria-hidden="true" />
+              <span>Mic blocked or no input device.</span>{" "}
+              <button
+                type="button"
+                className="perm-banner-action"
+                onClick={() => {
+                  // Clear latch + unmute so the publish effect re-prompts.
+                  setMicDenied(false);
+                  setUserMuted(false);
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
         {/* MW1-3: hold-to-talk renders only on coarse pointers (internal
             mount gate). The touch contextual action button now lives inside
             ContextActionBar. PTT logic itself is unchanged. */}
@@ -1575,13 +1589,13 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           className="overflow-toggle"
           onClick={() => setOverflowOpen((v) => !v)}
           aria-expanded={overflowOpen}
-          aria-label="更多设置"
-          title="更多设置"
+          aria-label="More options"
+          title="More options"
         >
           ⋯
         </button>
         {overflowOpen && (
-          <div className="overflow-panel" role="menu" aria-label="界面设置">
+          <div className="overflow-panel" role="menu" aria-label="Interface settings">
             <button
               type="button"
               role="menuitem"
@@ -1590,7 +1604,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               aria-pressed={theme === "dark"}
             >
               {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-              <span>{theme === "dark" ? "浅色主题" : "深色主题"}</span>
+              <span>{theme === "dark" ? "Light theme" : "Dark theme"}</span>
             </button>
             <button
               type="button"
@@ -1600,7 +1614,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               aria-pressed={miniMode}
             >
               {miniMode ? <ExpandIcon /> : <MinimizeIcon />}
-              <span>{miniMode ? "退出迷你模式" : "迷你模式"}</span>
+              <span>{miniMode ? "Exit mini mode" : "Mini mode"}</span>
             </button>
             <button
               type="button"
@@ -1620,7 +1634,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               aria-pressed={perfOpen}
             >
               <Settings size={14} aria-hidden="true" />
-              <span>性能设置</span>
+              <span>Performance</span>
             </button>
             {isModerator && (
               <button
@@ -1630,7 +1644,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
                 onClick={() => setModerationOpen(true)}
               >
                 <Shield size={14} aria-hidden="true" />
-                <span>管理面板</span>
+                <span>Admin panel</span>
               </button>
             )}
             {/* M3 T10: focus stats entry. */}
@@ -1642,7 +1656,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               aria-pressed={statsOpen}
             >
               <Timer size={14} aria-hidden="true" />
-              <span>专注统计</span>
+              <span>Focus stats</span>
             </button>
           </div>
         )}
@@ -1723,6 +1737,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           // Clicking the button when blocked acts as "retry": clear the
           // latch and un-mute so the next render re-attempts permission.
           if (micDenied) {
+            setMicAttempted(true);
             setMicDenied(false);
             setUserMuted(false);
             if (zoneKindRef.current === "silent") intendedMicOnRef.current = true;
@@ -2006,7 +2021,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           open={statsOpen}
           onClose={() => setStatsOpen(false)}
           side="bottom"
-          title="专注统计"
+          title="Focus stats"
         >
           <FocusStatsPanel
             backendUrl={cache?.backendUrl ?? ""}
@@ -2029,7 +2044,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             type="button"
             className="focus-toast-close"
             onClick={() => setFocusToast(null)}
-            aria-label="关闭通知"
+            aria-label="Dismiss notifications"
           >
             ✕
           </button>

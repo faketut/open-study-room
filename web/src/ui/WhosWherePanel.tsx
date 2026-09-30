@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Users } from "lucide-react";
 import { bucketByZone, zoneAllowsAudio, zonesOf, ZONE_KIND_LABELS } from "../domain/zones";
 import type { ZoneKind } from "../domain/zones";
 import { LOCAL_CHAT_IDENTITY, useSyncle } from "../state/syncleStore";
@@ -31,11 +32,17 @@ const COLLAPSED_KEY = "syncle.whosWhereCollapsed";
 
 function readCollapsed(): boolean {
   try {
-    return localStorage.getItem(COLLAPSED_KEY) === "1";
+    // Collapsed by default (contracts.md "UI refinements" §1). An explicit
+    // "0" means the user expanded it before; absence of the key (or any
+    // other value) means collapsed.
+    return localStorage.getItem(COLLAPSED_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
+
+// Exported for unit tests (collapsed-by-default contract).
+export { readCollapsed };
 
 export interface WhosWherePanelProps {
   /** Room name — keys the per-room block list (`syncle.blocked.<room>`). */
@@ -97,14 +104,14 @@ export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: Who
     blockIdentity(roomName, identity);
     setMenuIdentity(null);
     setBlockVersion((v) => v + 1);
-    showToast(`已屏蔽 ${name}（本地生效，对方不会收到通知）`);
+    showToast(`Blocked ${name} (local only; they will not be notified)`);
   }
 
   function handleUnblock(identity: string, name: string) {
     unblockIdentity(roomName, identity);
     setMenuIdentity(null);
     setBlockVersion((v) => v + 1);
-    showToast(`已取消屏蔽 ${name}`);
+    showToast(`Unblocked ${name}`);
   }
 
   async function submitReport(reason: ReportReason, detail: string) {
@@ -116,9 +123,9 @@ export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: Who
         reason,
         detail: detail.trim().length > 0 ? detail.trim() : undefined,
       });
-      showToast("举报已提交，房主会进行审核。");
+      showToast("Report submitted. The host will review it.");
     } catch (err) {
-      showToast(`举报失败：${describeReportError(err)}`);
+      showToast(`Report failed: ${describeReportError(err)}`);
     }
     setReportTarget(null);
     setMenuIdentity(null);
@@ -190,28 +197,34 @@ export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: Who
         aria-expanded={!collapsed}
         title={collapsed ? "Show who's where" : "Hide who's where"}
       >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          focusable="false"
-          style={{
-            transform: collapsed ? "rotate(-90deg)" : "none",
-            transition: "transform 200ms ease",
-          }}
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-        <span className="whos-where-title">Who's where</span>
-        <span className="whos-where-count">
-          {peerCount + 1}
-        </span>
+        {collapsed ? (
+          <>
+            <Users size={14} aria-hidden="true" focusable="false" />
+            <span className="whos-where-count">{peerCount + 1}</span>
+          </>
+        ) : (
+          <>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              focusable="false"
+              style={{
+                transition: "transform 200ms ease",
+              }}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            <span className="whos-where-title">Who's where</span>
+            <span className="whos-where-count">{peerCount + 1}</span>
+          </>
+        )}
       </button>
       {toast && (
         <div className="whos-where-toast" role="status">
@@ -227,7 +240,7 @@ export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: Who
                 title={zoneAllowsAudio(g.kind) ? "Talking allowed" : "Quiet — mic forced off"}
               >
                 <span className="whos-where-kind-name">{ZONE_KIND_LABELS[g.kind]}</span>
-                <span className="whos-where-kind-count">{g.total} 人</span>
+                <span className="whos-where-kind-count">{g.total}</span>
               </div>
               {g.zones.map((z) => {
                 const occupants = buckets.get(z.key) ?? [];
@@ -262,7 +275,7 @@ export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: Who
                                 title={
                                   isSelf
                                     ? `${o.name} (you)`
-                                    : `${o.name}${isHost ? " · 房主" : ""}${blocked ? " · 已屏蔽" : ""}`
+                                    : `${o.name}${isHost ? " · Host" : ""}${blocked ? " · Blocked" : ""}`
                                 }
                                 aria-label={isSelf ? `${o.name} (you)` : o.name}
                                 aria-haspopup={!isSelf && moderationReady ? "menu" : undefined}
@@ -276,7 +289,7 @@ export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: Who
                                 {initials(o.name)}
                                 {isHost && (
                                   <span className="host-badge" aria-label="Room host">
-                                    房主
+                                    Host
                                   </span>
                                 )}
                               </button>
@@ -364,7 +377,7 @@ function PeerMenu({
             else setArming("unblock");
           }}
         >
-          {arming === "unblock" ? "确认取消屏蔽？" : "取消屏蔽"}
+          {arming === "unblock" ? "Confirm unblock?" : "Unblock"}
         </button>
       ) : (
         <button
@@ -376,7 +389,7 @@ function PeerMenu({
             else setArming("block");
           }}
         >
-          {arming === "block" ? "确认屏蔽？" : "屏蔽"}
+          {arming === "block" ? "Confirm block?" : "Block"}
         </button>
       )}
       <button
@@ -385,7 +398,7 @@ function PeerMenu({
         className="peer-menu-item"
         onClick={onReport}
       >
-        举报
+        Report
       </button>
       <button
         type="button"
@@ -393,7 +406,7 @@ function PeerMenu({
         className="peer-menu-item peer-menu-cancel"
         onClick={onClose}
       >
-        取消
+        Cancel
       </button>
     </div>
   );
@@ -425,7 +438,7 @@ export function ReportDialog({
       }}
     >
       <div className="report-dialog">
-        <div className="report-dialog-title">举报 {targetName}</div>
+        <div className="report-dialog-title">Report {targetName}</div>
         <div className="report-reasons" role="radiogroup" aria-label="Report reason">
           {REPORT_REASONS.map((r) => (
             <label key={r} className="report-reason">
@@ -443,7 +456,7 @@ export function ReportDialog({
           className="report-detail"
           value={detail}
           maxLength={REPORT_DETAIL_MAX_LEN}
-          placeholder="补充说明（可选，最多 500 字）"
+          placeholder="Additional details (optional, max 500 characters)"
           rows={3}
           onChange={(e) => setDetail(e.target.value)}
           onKeyDown={(e) => e.stopPropagation()}
@@ -458,7 +471,7 @@ export function ReportDialog({
             className="peer-menu-item"
             onClick={onClose}
           >
-            取消
+            Cancel
           </button>
           <button
             type="button"
@@ -467,11 +480,11 @@ export function ReportDialog({
               if (isReportReason(reason)) onSubmit(reason, detail);
             }}
           >
-            提交举报
+            Submit report
           </button>
         </div>
         <div className="report-dialog-note">
-          举报仅房主可见。屏蔽是本地操作，对方不会收到通知。
+          Reports are only visible to the host. Blocking is local; the other person will not be notified.
         </div>
       </div>
     </div>

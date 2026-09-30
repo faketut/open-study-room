@@ -7,12 +7,12 @@
 
 /** Seconds → Chinese duration: 3661 → "1小时1分", 1500 → "25分",
  *  3600 → "1小时", 0/negative → "0分". Rounds down to whole minutes. */
-export function formatDurationZh(totalSeconds: number): string {
+export function formatDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return m > 0 ? `${h}小时${m}分` : `${h}小时`;
-  return `${m}分`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${m}m`;
 }
 
 /** Server day string "YYYY-MM-DD" → short axis label "9/29". Returns the

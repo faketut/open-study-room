@@ -19,9 +19,9 @@ const GRID = 20;
 /** Editable zone kinds shown in the editor. `none` is domain-level only
  *  (point outside every zone) and can never be authored. */
 const ZONE_KIND_OPTIONS: { value: ZoneKind; label: string }[] = [
-  { value: "silent", label: "Silent（自习区）" },
-  { value: "discussion", label: "Discussion（讨论区）" },
-  { value: "rest", label: "Rest（休息区）" },
+  { value: "silent", label: "Silent (study)" },
+  { value: "discussion", label: "Discussion" },
+  { value: "rest", label: "Rest (lounge)" },
 ];
 
 export interface MapEditorScreenProps {

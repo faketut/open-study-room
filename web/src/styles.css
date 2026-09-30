@@ -1299,6 +1299,13 @@ select {
 
 .whos-where.collapsed {
   width: auto;
+  padding: 4px 6px;
+  border-radius: 999px;
+}
+
+.whos-where.collapsed .whos-where-toggle {
+  width: auto;
+  padding: 2px 4px;
 }
 
 .whos-where-toggle {

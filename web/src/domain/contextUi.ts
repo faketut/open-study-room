@@ -89,15 +89,29 @@ export interface SuiteKeyHint {
 export function desktopHintFor(suite: ContextSuite): SuiteKeyHint | null {
   switch (suite) {
     case "meeting":
-      return { key: "E", label: "起身" };
+      return { key: "E", label: "Stand up" };
     case "object":
-      return { key: "F", label: "打开" };
+      return { key: "F", label: "Open" };
     case "sit":
-      return { key: "E", label: "坐下" };
+      return { key: "E", label: "Sit down" };
     case "person":
     case "idle":
       return null;
   }
+}
+
+/** Mic-blocked banner visibility (contracts.md "UI refinements" §2).
+ *  Pure so it is unit-testable. The banner shows only when the mic is
+ *  denied AND (the user is somewhere the mic matters — discussion/rest —
+ *  or they explicitly attempted to unmute, so retry feedback is visible).
+ *  In silent zones while just studying it stays hidden. */
+export function shouldShowMicWarning(
+  micDenied: boolean,
+  zoneKind: string,
+  micAttempted: boolean,
+): boolean {
+  if (!micDenied) return false;
+  return zoneKind === "discussion" || zoneKind === "rest" || micAttempted;
 }
 
 /** Touch/desktop parity (contract requirement): the touch action comes from

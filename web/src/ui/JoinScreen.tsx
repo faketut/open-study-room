@@ -529,7 +529,7 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         {kicked && (
           <div className="kicked-banner" role="alert" aria-live="assertive">
             <span>
-              您已被房主请出房间{kicked.reason ? `（${kicked.reason}）` : "。"}
+              You were removed from the room by the host{kicked.reason ? ` (${kicked.reason})` : "."}
             </span>
             <button
               type="button"
@@ -569,7 +569,7 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
           />
           {nicknameHasSensitiveWord && (
             <span className="hint warn">
-              该昵称可能包含敏感词，服务器可能拒绝入场（最终以服务器裁决为准）。
+              This nickname may contain sensitive words; the server may deny entry (server decision is final).
             </span>
           )}
         </label>

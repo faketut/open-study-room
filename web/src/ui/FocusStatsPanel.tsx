@@ -15,7 +15,7 @@ import { getFocusStats } from "../data/focusApi";
 import {
   barHeights,
   formatBarDayLabel,
-  formatDurationZh,
+  formatDuration,
 } from "./focusStatsFormat";
 
 export interface FocusStatsPanelProps {
@@ -51,7 +51,7 @@ export function FocusStatsPanel({
 
   const refresh = useCallback(async () => {
     if (!backendUrl || !userId) {
-      setLoad({ kind: "error", message: "未连接到服务器，无法加载统计。" });
+      setLoad({ kind: "error", message: "Not connected to the server. Stats unavailable." });
       return;
     }
     setLoad({ kind: "loading" });
@@ -79,14 +79,14 @@ export function FocusStatsPanel({
   }, [refresh]);
 
   return (
-    <section className="focus-stats" aria-label="专注统计">
+    <section className="focus-stats" aria-label="Focus stats">
       <div className="focus-stats-header">
-        <span className="focus-stats-title">专注统计</span>
+        <span className="focus-stats-title">Focus stats</span>
         <button
           type="button"
           className="focus-stats-close"
           onClick={onClose}
-          aria-label="关闭专注统计"
+          aria-label="Close focus stats"
         >
           ✕
         </button>
@@ -95,7 +95,7 @@ export function FocusStatsPanel({
       {load.kind === "loading" && (
         <div className="focus-stats-body">
           <div className="focus-stats-loading" role="status">
-            加载中…
+            Loading…
           </div>
         </div>
       )}
@@ -110,7 +110,7 @@ export function FocusStatsPanel({
             className="focus-stats-retry"
             onClick={() => void refresh()}
           >
-            重试
+            Retry
           </button>
         </div>
       )}
@@ -129,36 +129,36 @@ function FocusStatsBody({ stats }: { stats: FocusStats }) {
       <div className="focus-stats-tiles">
         <div className="focus-stats-tile">
           <div className="focus-stats-tile-value">
-            {formatDurationZh(stats.todaySec)}
+            {formatDuration(stats.todaySec)}
           </div>
-          <div className="focus-stats-tile-label">今日专注</div>
+          <div className="focus-stats-tile-label">Today</div>
         </div>
         <div className="focus-stats-tile">
           <div className="focus-stats-tile-value">
-            {formatDurationZh(stats.weekSec)}
+            {formatDuration(stats.weekSec)}
           </div>
-          <div className="focus-stats-tile-label">本周专注</div>
+          <div className="focus-stats-tile-label">This week</div>
         </div>
         <div className="focus-stats-tile">
           <div className="focus-stats-tile-value">
             {stats.streakDays}
-            <span className="focus-stats-tile-unit">天</span>
+            <span className="focus-stats-tile-unit">days</span>
           </div>
-          <div className="focus-stats-tile-label">连续专注</div>
+          <div className="focus-stats-tile-label">Day streak</div>
         </div>
       </div>
 
       <div className="focus-stats-total">
-        累计完成 {stats.totalCompletedSessions} 次专注
+        Completed {stats.totalCompletedSessions} focus sessions
       </div>
 
-      <div className="focus-stats-chart-title">近 7 天</div>
-      <div className="focus-stats-chart" role="img" aria-label="近7天每日专注时长">
+      <div className="focus-stats-chart-title">Last 7 days</div>
+      <div className="focus-stats-chart" role="img" aria-label="Daily focus time, last 7 days">
         {stats.last7Days.map((d, i) => (
           <FocusBar
             key={d.day}
             label={formatBarDayLabel(d.day)}
-            value={formatDurationZh(d.seconds)}
+            value={formatDuration(d.seconds)}
             heightPct={heights[i]}
             today={i === stats.last7Days.length - 1}
           />

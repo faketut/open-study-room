@@ -23,10 +23,10 @@ export interface TouchActionBarProps {
 /** 按钮文案：与 touch-controls-spec.md §4 按钮映射表一致
  *  （board/note 都是"打开"，sit 是"坐下"，stand 是"起身"）。 */
 const ACTION_LABELS: Record<TouchAction, string> = {
-  board: "打开",
-  note: "打开",
-  sit: "坐下",
-  stand: "起身",
+  board: "Open",
+  note: "Open",
+  sit: "Sit down",
+  stand: "Stand up",
 };
 
 /** 触屏上下文操作按钮。只在触屏设备（pointer: coarse 或 touch 事件可用）

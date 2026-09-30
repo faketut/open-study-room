@@ -19,17 +19,17 @@ export interface PerfSettingsProps {
 const OPTIONS: { value: PerfTier; label: string; hint: string }[] = [
   {
     value: "high",
-    label: "流畅",
+    label: "Smooth",
     hint: "60 fps · full DPR · all effects",
   },
   {
     value: "balanced",
-    label: "均衡",
+    label: "Balanced",
     hint: "60 fps · DPR ≤ 2 · reduced effects",
   },
   {
     value: "battery",
-    label: "省电",
+    label: "Battery saver",
     hint: "30 fps · DPR ≤ 1.5 · no float/shadow FX",
   },
 ];
@@ -40,7 +40,7 @@ export function PerfSettings({ tier, onChange }: PerfSettingsProps) {
       <legend
         style={{ fontSize: 12, fontWeight: 600, opacity: 0.75, marginBottom: 6 }}
       >
-        性能 Performance
+        Performance
       </legend>
       <div role="radiogroup" aria-label="Performance tier">
         {OPTIONS.map((opt) => (

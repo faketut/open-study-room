@@ -63,10 +63,10 @@ export function PttButton({ visible, onHoldStart, onHoldEnd }: PttButtonProps) {
       onPointerUp={handleEnd}
       onPointerCancel={handleEnd}
       onLostPointerCapture={handleLostPointerCapture}
-      aria-label="按住发言"
-      title="按住发言"
+      aria-label="Hold to talk"
+      title="Hold to talk"
     >
-      按住发言
+      Hold to talk
     </button>
   );
 }

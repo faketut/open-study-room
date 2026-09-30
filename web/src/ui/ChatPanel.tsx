@@ -222,10 +222,10 @@ export function ChatPanel({
       setThrottleNotice(null);
     } else if (result === "queued") {
       setThrottleNotice(
-        `发送太快了，已排队（${throttler?.pendingCount ?? 0}/${CHAT_QUEUE_MAX}，每 ${CHAT_SEND_MIN_INTERVAL_MS / 1000} 秒发一条）`,
+        `Sending too fast, queued (${throttler?.pendingCount ?? 0}/${CHAT_QUEUE_MAX}, one every ${CHAT_SEND_MIN_INTERVAL_MS / 1000}s)`,
       );
     } else {
-      setThrottleNotice("发送太快了，消息已丢弃，请稍后再试。");
+      setThrottleNotice("Sending too fast, message dropped. Try again later.");
     }
     setDraft("");
   }

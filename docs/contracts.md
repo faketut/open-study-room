@@ -1686,3 +1686,56 @@ entry; WASD legend removed; touch parity via `interactActionFor`.
 Tests: new `contextUi` suite + template validation green + all existing
 green. Out of scope: other four templates, walk cycles, any semantic
 contract change.
+
+## UI refinements + English strings (2026-09-30)
+
+Follow-up to the Layout revamp. Normative for the web client.
+
+### 1. Who's where: collapsed by default
+
+- The panel renders collapsed on first load. The collapsed state shows a
+  compact badge button with the total occupant count (self + peers); clicking
+  expands the full per-zone list.
+- The collapsed/expanded preference persists in
+  `localStorage["syncle.whosWhereCollapsed"]` ("1" collapsed / "0"
+  expanded). Absence of the key means collapsed (new default).
+- Rationale: aligns with the contextual-UI principle (no UI by default);
+  the social-presence function is kept, the screen space is not.
+
+### 2. Mic-blocked warning: contextual, not persistent
+
+- The top-left HUD shows only the minimal status pill by default
+  (nickname + presence dot).
+- The "Mic blocked or no input device" banner appears ONLY when all of:
+  - `micDenied` is latched (getUserMedia failed / no input device), AND
+  - at least one of:
+    - (a) the user is in a `discussion` or `rest` zone (where the mic
+      actually matters), or
+    - (b) the user attempted to unmute/enable the mic (mic toggle button
+      or `M` key while denied — the attempt sets a sticky flag so the
+      retry feedback is visible).
+- In `silent` zones while just studying, the banner stays hidden.
+- The banner keeps its Retry action (clears the latch, unmutes, re-prompts).
+
+### 3. English-only UI strings
+
+- All user-visible web UI strings are English. Direct hardcoded
+  English replacement; no i18n framework (consistent with codebase style).
+- Scope: `web/src/ui/**` (buttons, labels, prompts, tooltips, panel
+  titles, zone kind labels, user-facing errors), `web/src/domain/contextUi.ts`
+  hint labels, `web/src/domain/zones.ts` `ZONE_KIND_LABELS`,
+  `web/src/ui/TouchActionBar.tsx` action labels.
+- Out of scope (unchanged): code comments, `docs/`, server log messages,
+  test names/descriptions (unless a test asserts on a UI string — then the
+  assertion is updated). The pre-existing bilingual `LocalizedText`
+  pattern (`auth.ts`, template registry/metadata) is left as-is; it
+  already serves English.
+
+### Self-consistency checklist
+
+UI: who's-where collapsed default with count badge; mic banner gated by
+(denied && (discussion|rest || attempted)); status pill minimal otherwise.
+Strings: no CJK in user-visible UI strings (grep `[\u4e00-\u9fff]`
+over `web/src/ui/**` + the two domain files, excluding comments).
+Tests: new behavior tests (collapsed default, mic warning visibility
+rules) + full suite green + `tsc -b` + production build.
