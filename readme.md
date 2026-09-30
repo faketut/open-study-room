@@ -87,11 +87,12 @@ into `web/public/` by `npm run sync-assets` (runs automatically via
 
 ## Demo
 
-A 40-second screen recording of a single user in the library template: joining,
-walking around, sitting at table-b2 (E), starting a focus session, then walking
-to the Discussion Corner and opening the shared whiteboard (B). Recorded locally
-with the real stack (LiveKit `--dev` + Node server + production web build,
-driven by Playwright).
+A 41-second screen recording (960×720) of a single user in the redesigned
+library template: joining, walking through the lobby, sitting at a Discussion
+Corner table (E), starting a focus session, then opening the shared whiteboard
+(B). Shows the contextual UI — no buttons until you sit down or enter a zone.
+Recorded locally with the real stack (LiveKit `--dev` + Node server +
+production web build, driven by Playwright).
 
 <video src="docs/demo.mp4" poster="docs/demo-poster.png" controls width="640">
   <a href="docs/demo.mp4">Watch the demo (docs/demo.mp4)</a>
