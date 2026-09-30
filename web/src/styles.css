@@ -2081,3 +2081,333 @@ html[data-theme="light"] .now-playing-clear {
   align-items: center;
   gap: 6px;
 }
+
+/* ================= MW1 mobile layout =================
+ * Responsive mobile drawers, FAB buttons, HUD safe-area insets, and the
+ * 375px fullscreen-panel breakpoint (MW1-2).
+ *
+ * Desktop is untouched by design: the base rules below collapse every
+ * .mobile-drawer to `display: contents` and hide the scrim, grab handle,
+ * and header, so the wrapped panels (ChatPanel / WhosWherePanel /
+ * VideoTiles) render inline exactly as before. All mobile styling lives
+ * inside `@media (pointer: coarse)` blocks, which a `pointer: fine`
+ * desktop never matches.
+ */
+
+/* ---- MobileDrawer: desktop = transparent inline container ---- */
+.mobile-drawer {
+  display: contents;
+}
+.mobile-drawer-scrim,
+.mobile-drawer-handle,
+.mobile-drawer-header {
+  display: none;
+}
+.mobile-drawer-panel,
+.mobile-drawer-body {
+  display: contents;
+}
+
+/* FAB stack is a touch-layout concept: never rendered on desktop. */
+.fab-stack {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  /* ---- Drawer panel: fixed sheet, slides in from bottom/right ---- */
+  .mobile-drawer-panel {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25; /* above HUD chrome/video strip, below meeting view (30) */
+    background: rgba(20, 25, 32, 0.98);
+    border: 1px solid #2a323d;
+    overflow: hidden;
+    visibility: hidden;
+    transition: transform 240ms ease, visibility 240ms;
+  }
+  .mobile-drawer--bottom .mobile-drawer-panel {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 72dvh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    transform: translateY(105%);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mobile-drawer--right .mobile-drawer-panel {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(86vw, 360px);
+    border-radius: 16px 0 0 16px;
+    border-right: none;
+    transform: translateX(105%);
+    padding-right: env(safe-area-inset-right);
+  }
+  .mobile-drawer.open .mobile-drawer-panel {
+    transform: none;
+    visibility: visible;
+  }
+
+  /* ---- Scrim: click-to-close, fades in with the panel ---- */
+  .mobile-drawer-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 24;
+    background: rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 240ms ease, visibility 240ms;
+  }
+  .mobile-drawer.open .mobile-drawer-scrim {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* ---- Grab handle: swipe-to-dismiss affordance ---- */
+  .mobile-drawer-handle {
+    display: block;
+    flex: 0 0 auto;
+    padding: 10px 0 8px;
+    cursor: grab;
+    touch-action: none;
+  }
+  .mobile-drawer-handle::after {
+    content: "";
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: #4a5260;
+    margin: 0 auto;
+  }
+
+  /* ---- Header: title + 40px close target ---- */
+  .mobile-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    padding: 2px 8px 10px 14px;
+    border-bottom: 1px solid #2a323d;
+  }
+  .mobile-drawer-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: #e6edf3;
+  }
+  .mobile-drawer-close {
+    width: 40px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: #9aa4b1;
+    cursor: pointer;
+  }
+  .mobile-drawer-close:active {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e6edf3;
+  }
+
+  /* ---- Body: scrollable content area ---- */
+  .mobile-drawer-body {
+    display: block;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Panels flatten to fill the drawer instead of floating absolutely. */
+  .mobile-drawer-body > .chat-panel {
+    position: static;
+    width: auto;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+  .mobile-drawer-body > .whos-where {
+    width: auto;
+  }
+  .mobile-drawer-body > .video-tiles {
+    position: static;
+    transform: none;
+    max-width: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 12px;
+    overflow-x: visible;
+    pointer-events: auto;
+  }
+
+  /* ---- FAB: circular touch targets, stacked above the joystick zone ---- */
+  .fab-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: fixed;
+    right: calc(12px + env(safe-area-inset-right));
+    bottom: calc(96px + env(safe-area-inset-bottom));
+    z-index: 26;
+  }
+  .fab {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: rgba(20, 25, 32, 0.92);
+    border: 1px solid #2a323d;
+    color: #e6edf3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+    position: relative;
+  }
+  .fab:active {
+    transform: scale(0.94);
+  }
+  .fab .fab-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 10px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ---- HUD: respect notch, home indicator, and side insets ---- */
+  .hud {
+    top: calc(12px + env(safe-area-inset-top));
+    padding-left: calc(14px + env(safe-area-inset-left));
+    padding-right: calc(14px + env(safe-area-inset-right));
+    max-width: calc(
+      100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right)
+    );
+  }
+}
+
+/* 375px breakpoint: drawers become fullscreen panels (no horizontal
+ * scroll, everything reachable) — the MW1 acceptance viewport. */
+@media (pointer: coarse) and (max-width: 375px) {
+  .mobile-drawer--bottom .mobile-drawer-panel {
+    top: 0;
+    max-height: none;
+    height: 100dvh;
+    border-radius: 0;
+    border-top: none;
+    padding-top: env(safe-area-inset-top);
+  }
+  .mobile-drawer--right .mobile-drawer-panel {
+    width: 100vw;
+    border-radius: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-drawer-panel,
+  .mobile-drawer-scrim {
+    transition: none;
+  }
+}
+
+/* ================= MW1 coordinator integration ================= */
+
+/* MW1-3: contextual action button (the F/E-key equivalent on touch).
+ * Mounted only on coarse pointers by TouchActionBar's internal gate, so
+ * plain positioning styles are safe here. */
+.touch-action-bar {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  z-index: 40;
+  min-width: 64px;
+  min-height: 56px;
+  padding: 0 20px;
+  border: 1px solid var(--accent);
+  border-radius: 28px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.touch-action-bar:active {
+  background: var(--accent-hover);
+}
+
+/* MW1-3: push-to-talk hold button (silent zones, touch only). */
+.ptt-button {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(168px + env(safe-area-inset-bottom));
+  z-index: 40;
+  min-width: 64px;
+  min-height: 56px;
+  padding: 0 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+  background: var(--bg-3);
+  color: #e6e8eb;
+  font-size: 16px;
+  font-weight: 600;
+  touch-action: none; /* hold gesture must not scroll/zoom */
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ptt-button:active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* MW1-4: performance settings dropdown inside the HUD. The HUD sets
+ * pointer-events: none, so the panel must re-enable it. */
+.perf-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  min-width: 220px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  pointer-events: auto;
+}
+
+/* MW1-2: the old bottom-right chat toggle is replaced by the panel FAB
+ * stack on coarse pointers. */
+@media (pointer: coarse) {
+  .chat-toggle {
+    display: none;
+  }
+}
+
+/* MW1-4 battery tier: kill cosmetic animations (reaction float is the
+ * only animated cosmetic element in the session view). */
+.perf-battery .meeting-tile-reaction {
+  animation: none;
+}

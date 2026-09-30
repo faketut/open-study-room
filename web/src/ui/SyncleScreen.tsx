@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, type Participant } from "livekit-client";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff,
-  MessageSquare, StickyNote, X,
+  MessageSquare, StickyNote, X, Settings,
 } from "lucide-react";
 import { SpatialCanvas } from "./SpatialCanvas";
+import { TouchJoystick } from "./TouchJoystick";
+import { TouchActionBar } from "./TouchActionBar";
+import { PttButton } from "./PttButton";
+import { MobileDrawer } from "./MobileDrawer";
+import { PerfSettings } from "./PerfSettings";
 import {
   AVATAR_RADIUS,
   LOCAL_CHAT_IDENTITY,
@@ -47,6 +52,23 @@ import {
   reduceZoneCrossing,
   shouldApplyVolume,
 } from "../domain/audioPolicy";
+import {
+  hasArrived,
+  screenToWorld,
+  stepToward,
+  type Point,
+} from "../domain/touchMove";
+import {
+  interactActionFor,
+  type TouchAction,
+} from "../domain/touchActions";
+import { computeViewport } from "../domain/camera";
+import {
+  readPerfTier,
+  writePerfTier,
+  environmentFromNavigator,
+  type PerfTier,
+} from "../domain/perfPrefs";
 import { reportState } from "../data/sessionApi";
 import { ChatPanel } from "./ChatPanel";
 import { VideoTiles } from "./VideoTiles";
@@ -72,6 +94,11 @@ const TABLE_JOIN_RADIUS = 40;
 /** Show the "press F to read" hint when the avatar is within this radius of
  *  a sticky-note object. */
 const NOTE_READ_RADIUS = 36;
+/** MW1: coarse-pointer (touch) detection. Touch controls mount only when
+ *  true, so desktop keeps zero touch listeners (spec §1). */
+const isCoarsePointer =
+  typeof window !== "undefined" &&
+  (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
 /** Minimum interval between two portal teleports. Prevents instant bounce
  *  through an inverse portal at the destination. */
 const PORTAL_COOLDOWN_MS = 1500;
@@ -373,6 +400,30 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   /** Chat panel visibility + typing guard so WASD/M/E don't fire while the
    *  user is composing a message. */
   const [chatOpen, setChatOpen] = useState(false);
+  // MW1-2: drawer state for the responsive panels (desktop renders inline
+  // via CSS `display: contents`, so these only matter on coarse pointers).
+  const [whosWhereOpen, setWhosWhereOpen] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(false);
+  // MW1-4: performance tier (persisted). Drives frame throttle + DPR cap.
+  const [perfOpen, setPerfOpen] = useState(false);
+  const [perfTier, setPerfTier] = useState<PerfTier>(() =>
+    readPerfTier(
+      localStorage,
+      typeof navigator !== "undefined"
+        ? environmentFromNavigator(navigator)
+        : undefined,
+    ),
+  );
+  const perfTierRef = useRef(perfTier);
+  useEffect(() => {
+    perfTierRef.current = perfTier;
+  }, [perfTier]);
+  // MW1-1: touch movement refs. Joystick writes touchVecRef; tap-to-move
+  // writes tapTargetRef. Both are consumed by the game-loop tick.
+  const touchVecRef = useRef({ x: 0, y: 0 });
+  const tapTargetRef = useRef<Point | null>(null);
+  const stalledFramesRef = useRef(0);
+  const tapDownRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const [typingInChat, setTypingInChat] = useState(false);
   const typingRef = useRef(false);
   useEffect(() => { typingRef.current = typingInChat; }, [typingInChat]);
@@ -394,6 +445,46 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       }
     }
   }, [chatOpen]);
+
+  // MW1-3: sit/stand toggle shared by the E key and the touch action bar.
+  const toggleSit = useCallback(() => {
+    tapTargetRef.current = null; // sitting/standing cancels tap-to-move
+    const state = useSyncle.getState();
+    const selfNow = state.self;
+    const mapNow = state.map;
+    if (!selfNow || !mapNow) return;
+    if (selfNow.tableId) {
+      setSelfTable(null);
+      void setTableAttribute(room, null).catch((err) =>
+        console.warn("setTableAttribute(null) failed", err),
+      );
+    } else {
+      const near = findNearestTable(
+        selfNow.x,
+        selfNow.y,
+        mapNow,
+        TABLE_JOIN_RADIUS,
+      );
+      if (near) {
+        setSelfTable(near.id);
+        void setTableAttribute(room, near.id).catch((err) =>
+          console.warn("setTableAttribute failed", err),
+        );
+      }
+    }
+  }, [room, setSelfTable]);
+
+  // MW1-3: open nearest board (precedence, same as F) or note; shared by
+  // the F key and the touch action bar.
+  const openNearbyInteract = useCallback(() => {
+    const bIdx = nearbyBoardIndexRef.current;
+    if (bIdx != null) {
+      setViewingBoardIndex(bIdx);
+    } else {
+      const idx = nearbyNoteIndexRef.current;
+      if (idx != null) setReadingNoteIndex(idx);
+    }
+  }, []);
 
   // Keyboard input. WASD/arrows move; E toggles "sit at nearest table".
   useEffect(() => {
@@ -419,29 +510,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       } else if (e.key.toLowerCase() === "e") {
         e.preventDefault();
         // Toggle: if seated -> stand; else try to sit at nearest table.
-        const state = useSyncle.getState();
-        const selfNow = state.self;
-        const mapNow = state.map;
-        if (!selfNow || !mapNow) return;
-        if (selfNow.tableId) {
-          setSelfTable(null);
-          void setTableAttribute(room, null).catch((err) =>
-            console.warn("setTableAttribute(null) failed", err),
-          );
-        } else {
-          const near = findNearestTable(
-            selfNow.x,
-            selfNow.y,
-            mapNow,
-            TABLE_JOIN_RADIUS,
-          );
-          if (near) {
-            setSelfTable(near.id);
-            void setTableAttribute(room, near.id).catch((err) =>
-              console.warn("setTableAttribute failed", err),
-            );
-          }
-        }
+        toggleSit();
       } else if (e.key.toLowerCase() === "m") {
         // Manual mute toggle. Routes through toggleUserMuted so the
         // silent-zone intent bookkeeping stays consistent. When mic is in
@@ -458,13 +527,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         // notes when both are within reach, since boards are larger and the
         // intent is usually "open the PR list" when standing in front of one.
         e.preventDefault();
-        const bIdx = nearbyBoardIndexRef.current;
-        if (bIdx != null) {
-          setViewingBoardIndex(bIdx);
-        } else {
-          const idx = nearbyNoteIndexRef.current;
-          if (idx != null) setReadingNoteIndex(idx);
-        }
+        openNearbyInteract();
       } else if (e.key.toLowerCase() === "r") {
         // Quick reaction (default = wave). The reaction picker UI lives in
         // the HUD; this hotkey is the one-shot wave shortcut.
@@ -505,7 +568,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [room, setSelfTable]);
+  }, [room, setSelfTable, toggleSit, openNearbyInteract]);
 
   // Safety: if the window loses focus mid-PTT (alt-tab while holding
   // Space), the keyup never fires — release PTT on blur so the mic can't
@@ -527,6 +590,15 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     const publishIntervalMs = 1000 / POSITION_BROADCAST_HZ;
 
     const tick = (now: number) => {
+      // MW1-4 battery tier: cap the game loop at ~30fps. lastTickRef is
+      // only updated on executed frames so dt stays correct on resume.
+      if (
+        perfTierRef.current === "battery" &&
+        now - lastTickRef.current < 1000 / 30
+      ) {
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
       const dtMs = now - lastTickRef.current;
       lastTickRef.current = now;
       const dt = dtMs / 1000;
@@ -538,7 +610,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       if (keys.has("s") || keys.has("arrowdown")) dy += 1;
       if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
       if (keys.has("d") || keys.has("arrowright")) dx += 1;
+      // MW1-1: touch joystick vector merges with keyboard input (the two
+      // are mutually exclusive in practice; summed then normalized).
+      const joy = touchVecRef.current;
+      if (joy.x !== 0 || joy.y !== 0) {
+        dx += joy.x;
+        dy += joy.y;
+      }
       if (dx !== 0 || dy !== 0) {
+        // Any keyboard/joystick input cancels tap-to-move.
+        tapTargetRef.current = null;
+        stalledFramesRef.current = 0;
         const len = Math.hypot(dx, dy);
         dx /= len;
         dy /= len;
@@ -554,6 +636,46 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           );
           if (moved.x !== current.x || moved.y !== current.y) {
             setSelfPosition(moved.x, moved.y);
+          }
+        }
+      } else {
+        // MW1-1: tap-to-move — straight-line move toward the tap target.
+        // Cancelled on arrival, stall (tapped inside a wall), sit, or map
+        // change. applyMove handles wall sliding; stall detection avoids
+        // jitter against obstacles.
+        const tapTarget = tapTargetRef.current;
+        if (tapTarget) {
+          const current = useSyncle.getState().self;
+          if (current && !current.tableId) {
+            if (hasArrived({ x: current.x, y: current.y }, tapTarget)) {
+              tapTargetRef.current = null;
+            } else {
+              const next = stepToward(
+                { x: current.x, y: current.y },
+                tapTarget,
+                MOVE_SPEED_PER_SEC * dt,
+              );
+              const moved = applyMove(
+                { x: current.x, y: current.y },
+                { x: next.x - current.x, y: next.y - current.y },
+                AVATAR_RADIUS,
+                map,
+              );
+              if (
+                Math.hypot(moved.x - current.x, moved.y - current.y) < 0.5
+              ) {
+                stalledFramesRef.current += 1;
+                if (stalledFramesRef.current >= 10) {
+                  tapTargetRef.current = null;
+                  stalledFramesRef.current = 0;
+                }
+              } else {
+                stalledFramesRef.current = 0;
+                setSelfPosition(moved.x, moved.y);
+              }
+            }
+          } else {
+            tapTargetRef.current = null;
           }
         }
       }
@@ -581,6 +703,8 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               // Stand the user up: tables don't carry across maps.
               st.setSelfTable(null);
               st.setSelfPosition(spawn.x, spawn.y);
+              // MW1-1: map change cancels tap-to-move.
+              tapTargetRef.current = null;
               // Push the spawn position to peers so the avatar doesn't appear
               // to slide across the old map briefly.
               const packet = encodePosition(spawn.x, spawn.y, nextSeq());
@@ -847,6 +971,64 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   if (!map || !self) return null;
 
   const seated = self.tableId != null;
+
+  // MW1-3: touch contextual action (the F/E-key equivalent on touch).
+  // Priority matches the keyboard branches: stand > board > note > sit.
+  const touchAction: TouchAction | null = interactActionFor({
+    nearbyNoteIndex,
+    nearbyBoardIndex,
+    nearbyTable,
+    seated,
+  });
+  const handleTouchAction = (a: TouchAction) => {
+    if (a === "sit" || a === "stand") toggleSit();
+    else openNearbyInteract();
+  };
+
+  // MW1-3: touch push-to-talk. Writes the same pttHeldRef/setPttHeld the
+  // Space key uses, so the existing release guards (chat open, blur) apply.
+  const pttHoldStart = () => {
+    pttHeldRef.current = true;
+    setPttHeld(true);
+  };
+  const pttHoldEnd = () => {
+    if (pttHeldRef.current) {
+      pttHeldRef.current = false;
+      setPttHeld(false);
+    }
+  };
+
+  // MW1-1: tap-to-move gesture handlers, attached to the canvas wrapper.
+  // Only active on coarse pointers; desktop mouse clicks are unaffected.
+  const onCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isCoarsePointer) return;
+    tapDownRef.current = { x: e.clientX, y: e.clientY, t: performance.now() };
+  };
+  const onCanvasPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const down = tapDownRef.current;
+    tapDownRef.current = null;
+    if (!down || !isCoarsePointer) return;
+    if (performance.now() - down.t >= 300) return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) >= 10) return;
+    const canvas = e.currentTarget.querySelector("canvas");
+    const rect = canvas?.getBoundingClientRect();
+    if (!rect) return;
+    const st = useSyncle.getState();
+    const s = st.self;
+    const m = st.map;
+    if (!s || !m || s.tableId) return; // no tap-move while seated
+    const vp = computeViewport(rect.width, rect.height, { x: s.x, y: s.y }, m);
+    tapTargetRef.current = screenToWorld(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      vp,
+    );
+    stalledFramesRef.current = 0;
+  };
+
+  // MW1-4: DPR cap derived from the performance tier. `high` caps at 4,
+  // effectively uncapped on real devices (desktop zero-regression).
+  const dprCap = perfTier === "battery" ? 1.5 : perfTier === "balanced" ? 2 : 4;
   // Actual mic liveness under the M1 publish gate (a/b/c). In silent zones
   // this is true only while PTT is held.
   const micActive =
@@ -860,11 +1042,30 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   const camActive = seated && !userCamOff && !camDenied;
 
   return (
-    <div className={`syncle-screen${miniMode ? " mini" : ""}`}>
+    <div
+      className={`syncle-screen${miniMode ? " mini" : ""}${perfTier === "battery" ? " perf-battery" : ""}`}
+    >
       {!miniMode && (
         <>
-          <SpatialCanvas highlightTable={nearbyTable} highlightNoteIndex={nearbyNoteIndex} />
-          <WhosWherePanel />
+          <div
+            className="canvas-wrap"
+            onPointerDown={onCanvasPointerDown}
+            onPointerUp={onCanvasPointerUp}
+          >
+            <SpatialCanvas
+              highlightTable={nearbyTable}
+              highlightNoteIndex={nearbyNoteIndex}
+              dprCap={dprCap}
+            />
+          </div>
+          <MobileDrawer
+            open={whosWhereOpen}
+            onClose={() => setWhosWhereOpen(false)}
+            side="right"
+            title="Who's where"
+          >
+            <WhosWherePanel />
+          </MobileDrawer>
         </>
       )}
       {miniMode && <MiniPanel onExit={() => setMiniMode(false)} />}
@@ -906,7 +1107,28 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           >
             <MusicIcon />
           </button>
+          <button
+            type="button"
+            className="view-toggle"
+            onClick={() => setPerfOpen((v) => !v)}
+            title="Performance settings"
+            aria-label="Performance settings"
+            aria-pressed={perfOpen}
+          >
+            <Settings size={14} aria-hidden="true" />
+          </button>
         </div>
+        {perfOpen && (
+          <div className="perf-panel" role="dialog" aria-label="Performance settings">
+            <PerfSettings
+              tier={perfTier}
+              onChange={(t) => {
+                setPerfTier(t);
+                writePerfTier(localStorage, t);
+              }}
+            />
+          </div>
+        )}
         {nowPlayingOpen && (
           <div className="now-playing-row">
             <input
@@ -949,36 +1171,46 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           </div>
         )}
         <div className="peers">Peers: {peerCount}</div>
-        {seated ? (
-          <div className="peers">
-            Seated at <strong>{self.tableId}</strong> — press{" "}
-            <span className="key">E</span> to leave
-          </div>
-        ) : nearbyTable ? (
-          <div className="peers">
-            Press <span className="key">E</span> to join{" "}
-            <strong>{nearbyTable}</strong>
-          </div>
-        ) : (
-          <div className="peers">
-            Move: <span className="key">W</span><span className="key">A</span>
-            <span className="key">S</span><span className="key">D</span> /
-            arrow keys
-          </div>
-        )}
-        {nearbyNoteIndex != null && (
-          <div className="peers">
-            Press <span className="key">F</span> to read note
-          </div>
-        )}
-        {nearbyBoardIndex != null && (
-          <div className="peers">
-            Press <span className="key">F</span> to open board
-          </div>
+        {/* MW1: key hints are desktop-only; touch uses TouchActionBar/PttButton. */}
+        {!isCoarsePointer && (
+          <>
+            {seated ? (
+              <div className="peers">
+                Seated at <strong>{self.tableId}</strong> — press{" "}
+                <span className="key">E</span> to leave
+              </div>
+            ) : nearbyTable ? (
+              <div className="peers">
+                Press <span className="key">E</span> to join{" "}
+                <strong>{nearbyTable}</strong>
+              </div>
+            ) : (
+              <div className="peers">
+                Move: <span className="key">W</span><span className="key">A</span>
+                <span className="key">S</span><span className="key">D</span> /
+                arrow keys
+              </div>
+            )}
+            {nearbyNoteIndex != null && (
+              <div className="peers">
+                Press <span className="key">F</span> to read note
+              </div>
+            )}
+            {nearbyBoardIndex != null && (
+              <div className="peers">
+                Press <span className="key">F</span> to open board
+              </div>
+            )}
+          </>
         )}
         {zoneKind === "silent" && (
           <div className="peers">
-            Silent zone — hold <span className="key">Space</span> to talk
+            Silent zone —{" "}
+            {isCoarsePointer ? (
+              <>hold the talk button to speak</>
+            ) : (
+              <>hold <span className="key">Space</span> to talk</>
+            )}
           </div>
         )}
         {micDenied && (
@@ -998,6 +1230,14 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             </button>
           </div>
         )}
+        {/* MW1-3: touch contextual action (F/E equivalent) + hold-to-talk.
+            Both render only on coarse pointers (internal mount gate). */}
+        <TouchActionBar action={touchAction} onAction={handleTouchAction} />
+        <PttButton
+          visible={zoneKind === "silent"}
+          onHoldStart={pttHoldStart}
+          onHoldEnd={pttHoldEnd}
+        />
       </div>
       <button
         type="button"
@@ -1079,7 +1319,14 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         {sharingScreen ? <MonitorOff size={14} aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
         <span>{sharingScreen ? "Stop share" : "Share screen"}</span>
       </button>
-      <VideoTiles room={room} />
+      <MobileDrawer
+        open={videoOpen}
+        onClose={() => setVideoOpen(false)}
+        side="bottom"
+        title="Video"
+      >
+        <VideoTiles room={room} />
+      </MobileDrawer>
       <button
         type="button"
         className="meeting-toggle"
@@ -1127,15 +1374,54 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           );
         }}
       />
-      <ChatPanel
-        room={room}
+      <MobileDrawer
         open={chatOpen}
         onClose={() => setChatOpen(false)}
-        onTypingChange={setTypingInChat}
-        backendUrl={cache?.backendUrl ?? ""}
-        roomName={cache?.room ?? ""}
-        getToken={() => cache?.session.token ?? ""}
-      />
+        side="bottom"
+        title="Chat"
+      >
+        <ChatPanel
+          room={room}
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+          onTypingChange={setTypingInChat}
+          backendUrl={cache?.backendUrl ?? ""}
+          roomName={cache?.room ?? ""}
+          getToken={() => cache?.session.token ?? ""}
+        />
+      </MobileDrawer>
+      {/* MW1-2: panel FABs (CSS shows these only on coarse pointers). */}
+      <div className="fab-stack" aria-label="Panels">
+        <button
+          type="button"
+          className="fab"
+          onClick={() => setChatOpen((v) => !v)}
+          aria-label="Chat"
+        >
+          💬
+          {unread > 0 && !chatOpen && (
+            <span className="fab-badge">{unread > 99 ? "99+" : unread}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className="fab"
+          onClick={() => setWhosWhereOpen((v) => !v)}
+          aria-label="Who's where"
+        >
+          👥
+        </button>
+        {seated && (
+          <button
+            type="button"
+            className="fab"
+            onClick={() => setVideoOpen((v) => !v)}
+            aria-label="Video"
+          >
+            📹
+          </button>
+        )}
+      </div>
       {meetingViewOpen && (
         <MeetingView room={room} onLeave={() => setMeetingViewOpen(false)} />
       )}
@@ -1151,6 +1437,14 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           title={map.objects[viewingBoardIndex].label}
           repo={map.objects[viewingBoardIndex].repo}
           onClose={() => setViewingBoardIndex(null)}
+        />
+      )}
+      {/* MW1-1: touch joystick (coarse pointers only; internal mount gate). */}
+      {isCoarsePointer && (
+        <TouchJoystick
+          onVector={(v) => {
+            touchVecRef.current = v;
+          }}
         />
       )}
       <ReconnectOverlay onRetry={onRetryReconnect} />

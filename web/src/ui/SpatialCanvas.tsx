@@ -18,11 +18,15 @@ export interface SpatialCanvasProps {
   highlightTable?: string | null;
   /** Index (into map.objects) of the note the avatar can interact with. */
   highlightNoteIndex?: number | null;
+  /** MW1-4: cap for devicePixelRatio (battery tier saves GPU). Defaults to 4
+   *  (effectively uncapped on real devices). */
+  dprCap?: number;
 }
 
 export function SpatialCanvas({
   highlightTable = null,
   highlightNoteIndex = null,
+  dprCap = 4,
 }: SpatialCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bgRef = useRef<HTMLImageElement | null>(null);
@@ -91,7 +95,8 @@ export function SpatialCanvas({
     if (!map) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
+    // MW1-4: DPR capped by the performance tier (battery → 1.5).
+    const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
 
     function resize() {
       if (!canvas) return;
@@ -275,7 +280,7 @@ export function SpatialCanvas({
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(frame);
     };
-  }, [map]);
+  }, [map, dprCap]);
 
   return <canvas ref={canvasRef} tabIndex={0} />;
 }
