@@ -175,6 +175,20 @@ function migrate(db: Db): void {
       used_at INTEGER                 -- NULL = unused; single-use
     );
     CREATE INDEX IF NOT EXISTS idx_magic_tokens_expires ON magic_tokens(expires_at);
+    -- P1-C whiteboard (docs/contracts.md "Whiteboard (P1-C: discussion-zone
+    -- shared board)" §7). One row per (room, zone_id); the row's presence IS
+    -- the board (lazy creation on first successful PUT). Table/column names
+    -- are frozen by the contract; do not rename.
+    CREATE TABLE IF NOT EXISTS whiteboards (
+      room       TEXT NOT NULL,
+      zone_id    TEXT NOT NULL,
+      scene_json TEXT NOT NULL,          -- Excalidraw scene JSON string (opaque)
+      updated_at INTEGER NOT NULL,      -- epoch ms; LWW arbiter
+      updated_by TEXT NOT NULL,         -- users.id of the last writer (audit)
+      PRIMARY KEY (room, zone_id),
+      FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_whiteboards_room ON whiteboards(room);
   `);
   ensureRoomStateZoneColumns(db);
   ensureIdentityColumns(db);
@@ -1345,4 +1359,80 @@ export function consumeMagicToken(
  *  differently-cased addresses are one account (contract §1). */
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+// ---------- Whiteboard (P1-C: discussion-zone shared board) ----------
+// Contract: docs/contracts.md "Whiteboard (P1-C: discussion-zone shared
+// board)" §7. Helpers: getWhiteboard / putWhiteboard (LWW) / clearWhiteboard.
+
+export interface WhiteboardRow {
+  room: string;
+  zone_id: string;
+  scene_json: string;
+  /** Epoch ms; the LWW arbiter (strictly greater wins). */
+  updated_at: number;
+  /** users.id of the last writer (audit). */
+  updated_by: string;
+}
+
+export interface PutWhiteboardResult {
+  /** True when this write won LWW and was stored. */
+  applied: boolean;
+  /** The stored `updated_at` after the write (the winner's timestamp). */
+  updatedAt: number;
+}
+
+/** Latest stored snapshot for a board, or undefined when nothing has been
+ *  drawn in this zone yet (contract §6: `404 no_whiteboard`). */
+export function getWhiteboard(
+  db: Db,
+  room: string,
+  zoneId: string,
+): WhiteboardRow | undefined {
+  return db
+    .prepare<[string, string], WhiteboardRow>(
+      "SELECT * FROM whiteboards WHERE room = ? AND zone_id = ?",
+    )
+    .get(room, zoneId);
+}
+
+/** LWW store (contract §2c, §6 check 4): stores iff there is no row, or
+ *  `updatedAt > stored.updated_at` (strictly greater wins; ties are no-ops
+ *  — same content re-saved). Returns whether the write was applied and the
+ *  stored timestamp afterwards. The future-timestamp guard lives in the
+ *  route, not here (it runs before this helper is reached). */
+export function putWhiteboard(
+  db: Db,
+  room: string,
+  zoneId: string,
+  sceneJson: string,
+  updatedAt: number,
+  updatedBy: string,
+): PutWhiteboardResult {
+  const stored = getWhiteboard(db, room, zoneId);
+  if (stored && updatedAt <= stored.updated_at) {
+    return { applied: false, updatedAt: stored.updated_at };
+  }
+  db.prepare(
+    `INSERT INTO whiteboards (room, zone_id, scene_json, updated_at, updated_by)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(room, zone_id) DO UPDATE SET
+       scene_json = excluded.scene_json,
+       updated_at = excluded.updated_at,
+       updated_by = excluded.updated_by`,
+  ).run(room, zoneId, sceneJson, updatedAt, updatedBy);
+  return { applied: true, updatedAt };
+}
+
+/** Deletes a board (host clear, contract §6). Idempotent: returns whether a
+ *  row existed, but the route answers 204 either way. */
+export function clearWhiteboard(
+  db: Db,
+  room: string,
+  zoneId: string,
+): boolean {
+  const res = db
+    .prepare<[string, string]>("DELETE FROM whiteboards WHERE room = ? AND zone_id = ?")
+    .run(room, zoneId);
+  return res.changes > 0;
 }

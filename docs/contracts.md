@@ -1283,3 +1283,269 @@ SMTP creds), both env-only. Fragments: `#token=` / `#error=` are the only
 places a raw token crosses the wire to the browser. Anonymous flow:
 unchanged by construction (partial index + optional field + unchanged
 `upsertUser`).
+
+## Whiteboard (P1-C: discussion-zone shared board)
+
+Each `discussion` zone gets one shared whiteboard (a讲题scratch surface:
+diagrams, formulas, sketches). It is the persistent analog of the M1
+"screen share is allowed only in `discussion` zones" rule. It is **not** a
+collaborative editor — see §2 on conflict policy.
+
+### 1. Ownership — one board per discussion zone
+
+| Rule | Value |
+|---|---|
+| Board id | `wb:<room>:<zoneId>` (built by a shared helper, e.g. `whiteboardId(room, zoneId)`; room and zoneId both appear in the state's zone contract, max 64 chars each) |
+| Board ↔ zone | 1:1. A zone has at most one board; a board belongs to exactly one zone. The board is created lazily: the `whiteboards` row appears on the first successful `PUT` for that `(room, zone_id)`. |
+| `rest` zones | **No board.** Per M1, `rest` is a lounge/break area; the whiteboard is a focused co-work surface for讲题, not a break-room toy. |
+| `none` (no zone) | **No board.** Zone-less area has no bounded audience, so the "same-zone" filter in §2 is undefined — updates would fan out to the whole room. |
+| `silent` zones | **No board, ever.** Silent is study-only (M1); a drawing surface is the opposite of quiet. |
+
+The audience of a board is exactly the set of participants currently inside
+its discussion zone. Zone membership is decided by the same
+`zone`/`zone_kind` client reports the M1 mute policy trusts (server does not
+load map files; lying about your zone to draw is covered by the M2
+moderation loop — same honesty stance as M1).
+
+### 2. Sync mechanism — debounce + reliable broadcast + REST snapshots + LWW
+
+Three paths, one winner rule.
+
+**(a) Realtime broadcast (peer-to-peer, LiveKit data channel).**
+
+- The sender runs the Excalidraw `onChange(elements, appState, files)`
+  handler; the scene is serialized to JSON (`{elements, appState, files}`).
+- Send only while the board panel is **open** and the sender is inside that
+  board's discussion zone.
+- **Debounce + rate cap (frozen):** `WB_DEBOUNCE_MS = 500`,
+  `WB_MAX_BROADCAST_HZ = 2` — the client batches `onChange` events and
+  publishes at most one scene per 500 ms. This is one publish per 500 ms by
+  construction (debounce floor == rate-cap interval), so no token bucket is
+  needed: if another edit lands within 500 ms of the last publish, the timer
+  restarts and the *latest* scene is sent.
+- Transport: **reliable** data channel (`publishReliable`, same as chat in
+  `web/src/data/liveKitService.ts`) — position uses unreliable, board
+  updates must not silently drop.
+- Wire format (JSON over the data channel), keys verbatim:
+
+```json
+{"type":"wb_update","board":"wb:<room>:<zoneId>","zone_id":"<zoneId>","updated_at":<epoch ms>,"scene":{...excalidraw scene...}}
+```
+
+**(b) REST snapshot (server persistence).**
+
+- **On entering a discussion zone** (panel opens), on **room rejoin**, and on
+  **data-channel reconnect**, the client pulls
+  `GET /v1/rooms/:room/whiteboards/:zoneId` (§6) and applies the snapshot if
+  it is newer than the local scene (`updated_at` comparison).
+- **On broadcast**, the sender SHOULD also `PUT` the same scene to the
+  server, at most as often as it broadcasts (i.e. PUT rides the same
+  debounce timer). This is best-effort persistence for late joiners; it is
+  not the realtime path.
+
+**(c) Conflict policy — last-write-wins (LWW).**
+
+- The arbiter is `updated_at` (epoch ms).
+- **Data-channel path:** the receiver applies the incoming scene iff
+  `msg.zone_id === receiver's current zone_id` **and**
+  `msg.board === whiteboardId(room, msg.zone_id)` **and**
+  `msg.updated_at > local.updated_at` for that board. Equal or older →
+  ignore (rebroadcasts are idempotent).
+- **REST path:** `PUT` stores iff `body.updated_at > stored.updated_at`
+  (ties are no-ops — same content re-saved). Otherwise the server returns
+  `200 {ok:true, applied:false, updated_at:<stored>}` and the client MUST
+  `GET` to converge (§6).
+- **Honest limitation (frozen, not hidden):** there is no OT/CRDT and no
+  locking. Two people drawing within the same debounce window produce two
+  competing full-scene writes; the later one wins and the earlier one's
+  strokes are lost. The whiteboard is positioned as a讲题draft surface,
+  not a collaborative editor. This is a contract-level decision, not a bug
+  to fix later.
+
+### 3. Visibility — zone-gated, M1 semantics win
+
+| Rule | Value |
+|---|---|
+| Open | The board panel can be opened only while the user is inside a `discussion` zone. The open button is hidden elsewhere. |
+| Auto-close | Crossing into a `silent` or `rest` zone (or leaving zones entirely → `none`) **closes the panel immediately**. M1's quiet/break semantics take precedence over keeping a drawing surface open; this is also the anti-disturbance rule — no whiteboard notifications, previews, or sounds may fire while the user is in `silent`/`rest`. |
+| Broadcast gating | §2(a) already stops publishing when the panel closes; the sender MUST also stop the debounce timer on zone exit (a delayed timer must not fire after the user left the zone). |
+| Re-entry | Re-entering the same discussion zone re-opens at the latest known scene (pull §2(b)); unsaved local strokes made before the zone exit were already broadcast under the debounce timer and are not lost unless a newer LWW write won. |
+
+### 4. Permissions
+
+- **Draw:** anyone currently inside the board's `discussion` zone may
+  draw — no per-user grant. The sender-side gate is the zone check in §2(a);
+  the server-side gate for persistence is the `not_in_zone` check in §6.
+- **Clear:** the **host only** may clear a board
+  (`DELETE /v1/rooms/:room/whiteboards/:zoneId`, §6). Rationale: the board
+  is per-room shared state and the host owns the room; the site-level
+  `admin` (P1-B) does **not** own the room and gets no clear right.
+  Server-side the call is gated by `getEffectiveRole` == `"host"` (never the
+  client-published `role` attribute — M2's single security rule applies).
+- **Clear propagation:** on successful clear the server SHOULD fan out
+  `{"type":"wb_clear","board":"wb:<room>:<zoneId>","zone_id":"<zoneId>","updated_at":<now>}`
+  via `RoomServiceClient.sendData` (broadcast, reliable) — the same server→
+  client push the M2 kick notice uses. Receivers in that zone with
+  `msg.updated_at > local.updated_at` clear their local scene. The clearing
+  host's own client clears optimistically without waiting.
+- **M2 blockList (receiver-side):** a receiver MUST ignore `wb_update` /
+  `wb_clear` messages whose LiveKit sender identity is in the local block
+  list (`syncle.blocked.<room>`, `web/src/domain/blockList.ts`). This is
+  local ignore only — the server cannot filter P2P data (M2 honesty rule).
+  Known limitation: `GET` snapshots still show the latest scene regardless
+  of the block list, because the block list lives in the blocker's
+  localStorage and the server cannot know it; the receiver applies the
+  block-list check to the *update stream*, not to persisted history.
+
+### 5. Performance constraints (frozen)
+
+| Constant | Value | Notes |
+|---|---|---|
+| `WB_DEBOUNCE_MS` | `500` | §2(a): at most one broadcast per 500 ms |
+| `WB_MAX_BROADCAST_HZ` | `2` | Same number restated; debounce floor enforces it |
+| `WHITEBOARD_MAX_SNAPSHOT_BYTES` | `262144` (256 KiB) | Applies to the serialized `scene_json` bytes on `PUT`; over → `413 {error:"too_large"}`. Client SHOULD refuse to broadcast scenes over the cap too (no point pushing what the server will reject). |
+| Lazy load | mandatory | `@excalidraw/excalidraw` MUST NOT be in the first-screen bundle. The panel mounts via dynamic `import()` (`React.lazy`) and loads only when first opened. The bundle budget keeps JoinScreen → room entry fast. |
+| Snapshot pull budget | 1 per zone entry | No polling. Pulls happen on the three triggers in §2(b) only. |
+
+`WHITEBOARD_MAX_SNAPSHOT_BYTES` is a zod-validated env var in
+`server/src/config.ts` (default `262144`); changing it is a config change,
+not a contract change.
+
+### 6. REST endpoints
+
+Auth for all three: the **LiveKit join token** as bearer (same as M1 state
+reports in `server/src/routes/state.ts`): `401 missing_bearer` /
+`401 invalid_token`, `403 room_mismatch` when `payload.video.room !== room`,
+`403 identity_mismatch` when the body `userId !== payload.sub`. The P1-B
+login-session token is NOT accepted here — the join token is the room-scoped
+credential, consistent with M1–M4 REST.
+
+**`GET /v1/rooms/:room/whiteboards/:zoneId`** — pull snapshot.
+
+- Any joined room member may read (the board is shared room content, like
+  the position snapshot); no zone check on read.
+- `200 { "scene_json": string, "updated_at": number, "updated_by": string }`
+  (`scene_json` is the JSON *string* of the Excalidraw scene; the client
+  parses it).
+- `404 { "error": "no_whiteboard" }` — nothing has been drawn in this zone
+  yet; the client starts with an empty scene. (Not an error state in the
+  UI.)
+
+**`PUT /v1/rooms/:room/whiteboards/:zoneId`** — store snapshot.
+
+- Body: `{ "userId": string, "scene_json": string, "updated_at": number }`
+  (zod; `scene_json` non-empty, `updated_at` integer ms).
+- Checks, in order:
+  1. `400 { error: "invalid_body" }` on schema failure.
+  2. Byte length of `scene_json` (UTF-8) `> WHITEBOARD_MAX_SNAPSHOT_BYTES`
+     → `413 { "error": "too_large" }`.
+  3. Caller-zone check: the server reads the caller's `room_state` row for
+     `(room, userId)`; requires `row.zone === zoneId` AND
+     `row.zone_kind === "discussion"`. Else `403 { "error": "not_in_zone" }`.
+     (The server trusts the client-reported zone, exactly as the M1 mute
+     policy does — same honesty stance.)
+  4. LWW: if a row exists and `body.updated_at <= stored.updated_at` →
+     `200 { "ok": true, "applied": false, "updated_at": <stored> }` and the
+     client MUST `GET` to converge. If no row, or
+     `body.updated_at > stored.updated_at` → store
+     (`scene_json`, `updated_at = body.updated_at`, `updated_by = userId`)
+     and return `200 { "ok": true, "applied": true }`.
+  5. Future-dated guard: `body.updated_at > Date.now() + 60_000` → `400
+     { error: "invalid_body" }`.
+- Rate limit: per-user-per-board `WHITEBOARD_PUT_RATE_LIMIT_MAX` per
+  `WHITEBOARD_PUT_RATE_LIMIT_WINDOW_MS` (defaults 30/hour — snapshots are
+  rare; debounce timers already throttle). Exceeding →
+  `429 { error: "rate_limited" }`.
+
+**`DELETE /v1/rooms/:room/whiteboards/:zoneId`** — clear board (host only).
+
+- Body: `{ "userId": string }`.
+- `getEffectiveRole(db, room, userId) !== "host"` →
+  `403 { "error": "not_host" }`.
+- Success: delete the row → `204`. Then the server SHOULD broadcast the
+  `wb_clear` notice (§4) via `RoomServiceClient.sendData` (reliable,
+  room-wide); a failed fan-out must not fail the `204` (log and continue,
+  same stance as the M1 mute edge).
+- Clearing a non-existent board is a no-op `204` (idempotent).
+
+### 7. Server table
+
+```sql
+CREATE TABLE IF NOT EXISTS whiteboards (
+  room       TEXT NOT NULL,
+  zone_id    TEXT NOT NULL,
+  scene_json TEXT NOT NULL,          -- Excalidraw scene JSON string (elements + appState + files)
+  updated_at INTEGER NOT NULL,      -- epoch ms; LWW arbiter (§2c)
+  updated_by TEXT NOT NULL,         -- users.id of the last writer (audit)
+  PRIMARY KEY (room, zone_id),
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_whiteboards_room ON whiteboards(room);
+```
+
+Frozen rules:
+
+- One row per `(room, zone_id)` by construction; no second table tracks
+  "which zones have boards" — the row's presence is the board.
+- `updated_by` FK is `ON DELETE CASCADE` (same as the M2 tables): deleting
+  the account row deletes the board — recorded, accepted.
+- No server-side scene validation beyond the byte cap. The server stores
+  the JSON string opaquely; Excalidraw scene semantics are client-side.
+  (A corrupt scene is a client bug; the LWW overwrite path recovers it.)
+- The server never pushes board updates over the data channel except the
+  `wb_clear` fan-out in §6. There is no server-side "who is drawing" state.
+
+### 8. Explicitly out of scope
+
+- **Undo/redo across clients, cursors, presence on the canvas** — local
+  Excalidraw undo only; no remote cursor protocol.
+- **Board history / versions** — LWW keeps one scene. A "restore earlier
+  version" UI needs its own contract.
+- **Image/file uploads beyond embedded Excalidraw `files`** — embedded
+  images count toward the 256 KiB cap; there is no separate asset endpoint.
+- **Boards in `rest`/`silent`/`none`** (§1) and **per-table boards** —
+  the board is per discussion *zone*, not per table.
+- **Export (PNG/SVG)** — client-local feature, no contract impact.
+
+### Where it lives (P1-C implementation targets)
+
+| Side | File | Symbol |
+|---|---|---|
+| Server | `server/src/db.ts` | `whiteboards` schema + `getWhiteboard` / `putWhiteboard` (LWW) / `clearWhiteboard` helpers |
+| Server | `server/src/routes/whiteboard.ts` | `GET` / `PUT` / `DELETE /v1/rooms/:room/whiteboards/:zoneId` + `not_in_zone` / `too_large` / `not_host` gates |
+| Server | `server/src/config.ts` | `WHITEBOARD_MAX_SNAPSHOT_BYTES`, `WHITEBOARD_PUT_RATE_LIMIT_*` (zod) |
+| Web | `web/src/domain/whiteboard.ts` | `whiteboardId(room, zoneId)`, `WB_DEBOUNCE_MS`, `WB_MAX_BROADCAST_HZ`, `WB_UPDATE_TYPE`/`WB_CLEAR_TYPE`, zone/visibility predicates (pure, unit-tested) |
+| Web | `web/src/data/whiteboardApi.ts` | `getSnapshot`, `putSnapshot`, `clearBoard` (join-token bearer, like `sessionApi.ts`) |
+| Web | `web/src/ui/WhiteboardPanel.tsx` | lazy-loaded (`React.lazy` + dynamic `import()` of `@excalidraw/excalidraw`); `onChange` debounce → `publishReliable` + `PUT`; applies `wb_update`/`wb_clear` with LWW + blockList ignore; auto-closes on zone exit |
+
+### Test coverage (P1-C targets)
+
+- `whiteboardId` format `wb:<room>:<zoneId>`; receiver drops messages for a
+  different `zone_id` or a malformed `board`.
+- LWW receiver: older/duplicate `updated_at` ignored; newer applied.
+- LWW `PUT`: older body → `200 applied:false`; client converges via `GET`.
+- `PUT` from a caller whose `room_state` is a different zone / `rest` /
+  `silent` → `403 not_in_zone`.
+- `PUT` over 256 KiB → `413 too_large` (boundary: exactly 262144 bytes OK).
+- `DELETE` by a non-host (incl. a site-level admin without the host row) →
+  `403 not_host`; by the host → `204` and row gone.
+- Debounce: rapid `onChange` bursts publish at most 1 per 500 ms and the
+  published scene is the latest.
+- Excalidraw import is lazy: the first-screen bundle contains no
+  `@excalidraw/excalidraw` (build assertion on chunk contents).
+- Blocked sender's `wb_update` ignored locally; snapshot `GET` still works
+  (honest limitation).
+- Zone exit closes the panel and stops the pending debounce timer (no
+  broadcast after leaving).
+
+### Self-consistency checklist (for the P1-C implementer)
+
+Tables: one (`whiteboards`), no companion state. Endpoints: three, all under
+`/v1/rooms/:room/whiteboards/:zoneId`. Wire types: two (`wb_update`,
+`wb_clear`), both JSON over the reliable data channel. Clocks: `updated_at`
+is epoch ms everywhere; the only arbiter is "strictly greater wins".
+Auth: join-token bearer + `userId == sub`, never the `role` attribute, never
+the login-session token. Roles: draw = anyone in the zone; clear = host
+only. Zones: board exists only for `discussion`; panel auto-closes on
+leaving. Perf: 500 ms debounce, 2/s cap, 256 KiB snapshot cap, lazy-loaded
+editor. Anonymous flow: untouched (no identity columns involved).

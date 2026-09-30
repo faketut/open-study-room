@@ -168,3 +168,38 @@ export function createRoomAdmin(
 ): RoomAdminClient {
   return new LiveKitRoomAdmin(new RoomServiceClient(host, apiKey, apiSecret));
 }
+
+// ---------- P1-C whiteboard clear fan-out ----------
+// docs/contracts.md "Whiteboard (P1-C: discussion-zone shared board)" §4:
+// on a successful host clear the server fans out a reliable `wb_clear`
+// payload room-wide — the same RoomServiceClient.sendData transport the M2
+// kick notice uses, but with no destination identities so the SFU
+// broadcasts to every participant. Kept an interface (instead of the
+// concrete client) so tests can inject a spy.
+
+/** Minimal surface for the whiteboard clear fan-out. */
+export interface RoomBroadcastClient {
+  /** Reliable room-wide broadcast of a JSON payload. */
+  broadcast(room: string, payload: string): Promise<unknown>;
+}
+
+export class LiveKitRoomBroadcaster implements RoomBroadcastClient {
+  constructor(private readonly client: RoomServiceClient) {}
+
+  async broadcast(room: string, payload: string): Promise<unknown> {
+    return this.client.sendData(
+      room,
+      new TextEncoder().encode(payload),
+      DataPacket_Kind.RELIABLE,
+    );
+  }
+}
+
+/** Build a RoomBroadcastClient backed by a real LiveKit RoomServiceClient. */
+export function createRoomBroadcaster(
+  host: string,
+  apiKey: string,
+  apiSecret: string,
+): RoomBroadcastClient {
+  return new LiveKitRoomBroadcaster(new RoomServiceClient(host, apiKey, apiSecret));
+}

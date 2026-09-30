@@ -62,6 +62,17 @@ import { findZoneAt } from "../domain/zones";
 import { isBlockedIdentity } from "../domain/blockList";
 import { decodeKickNotice, moderationErrorCode, moderationErrorMessage } from "../domain/moderation";
 import {
+  WB_CLEAR_TYPE,
+  WB_UPDATE_TYPE,
+  decideWbInbound,
+  decodeWbMessage,
+} from "../domain/whiteboard";
+import {
+  applyRemoteWbClear,
+  applyRemoteWbUpdate,
+  getOpenWhiteboard,
+} from "../data/whiteboardSession";
+import {
   containsProfanity,
   SENSITIVE_WORDS,
 } from "../domain/profanityFilter";
@@ -293,7 +304,48 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
               setKicked({ reason });
               return;
             }
+            // P1-C: whiteboard messages (`wb_update` / `wb_clear`) are JSON
+            // too (contract "Whiteboard" §2a/§4) — same `{` dispatch as the
+            // kick notice. The receiver applies the scene only when the
+            // message is for the zone it currently stands in, the board id
+            // is well-formed, the sender is not block-listed, and LWW says
+            // it is newer (pure `decideWbInbound` in domain/whiteboard.ts).
+            const wbMsg = decodeWbMessage(payload);
+            if (wbMsg != null) {
+              const wbSession = getOpenWhiteboard();
+              const wbState = useSyncle.getState();
+              const wbSelf = wbState.self;
+              const wbMap = wbState.map;
+              const myZoneId =
+                wbSelf && wbMap
+                  ? (findZoneAt(wbSelf.x, wbSelf.y, wbMap)?.key ?? "")
+                  : "";
+              const verdict = decideWbInbound(wbMsg, {
+                room: roomName,
+                myZoneId,
+                localUpdatedAt: wbSession?.localUpdatedAt ?? 0,
+                // M2 T5 local block: drop whiteboard updates from blocked
+                // senders before they reach the canvas. Local ignore only —
+                // GET snapshots still show the latest scene (contract §4,
+                // honest limitation).
+                fromBlocked: isBlockedIdentity(roomName, identity),
+              });
+              if (verdict === "apply" && wbSession) {
+                if (wbMsg.type === WB_UPDATE_TYPE) {
+                  applyRemoteWbUpdate(wbMsg.scene, wbMsg.updated_at);
+                } else if (wbMsg.type === WB_CLEAR_TYPE) {
+                  applyRemoteWbClear(wbMsg.updated_at);
+                }
+              }
+              return;
+            }
           }
+          // Participant-originated packets below (position/chat/reaction)
+          // require a sender identity. Server-originated packets
+          // (kick_notice, wb_clear) arrive with identity "" and were
+          // already dispatched in the JSON branch above; dropping "" here
+          // also avoids creating a ghost "" peer in updatePeerPosition.
+          if (identity === "") return;
           // Dispatch by type tag (byte 0). Position=1, chat=2, reaction=3.
           if (payload.length > 0 && payload[0] === PACKET_TYPE_CHAT) {
             const chat = decodeChat(payload);

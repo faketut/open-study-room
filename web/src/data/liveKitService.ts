@@ -51,8 +51,14 @@ export async function connectLiveKit(
     .on(
       RoomEvent.DataReceived,
       (payload: Uint8Array, participant?: Participant) => {
-        if (!participant) return;
-        events.onData(participant.identity, payload);
+        // Server-originated packets (M2 kick notices, P1-C `wb_clear`
+        // room-wide fan-out) arrive with NO participant — the SFU has no
+        // sender to attribute. Dropping them here would silently lose the
+        // whiteboard clear fan-out (contract "Whiteboard" §4). Forward
+        // with an empty identity instead; the JoinScreen dispatch keys off
+        // the payload (type-tag byte / JSON `type`), and neither the kick
+        // notice nor `wb_clear` needs a sender identity.
+        events.onData(participant?.identity ?? "", payload);
       },
     )
     .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {

@@ -3318,3 +3318,138 @@ button.whos-where-avatar {
   color: var(--fg);
   background: var(--bg-3);
 }
+
+/* ---- P1-C: discussion-zone shared whiteboard ---- */
+
+/* Desktop HUD entry, next to the mic/cam/share pills (bottom-center row).
+   Rendered only inside discussion zones; mobile uses the fab-stack entry
+   instead. */
+.wb-toggle {
+  position: absolute;
+  bottom: 16px;
+  left: calc(50% + 350px);
+  border: 1px solid #2a323d;
+  background: #2a323d;
+  color: #e6edf3;
+  padding: 10px 16px;
+  border-radius: 24px;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wb-toggle:hover {
+  filter: brightness(1.15);
+}
+
+/* Full overlay panel. Excalidraw needs a sized container — the canvas div
+   is a fixed height so the editor mounts correctly. */
+.whiteboard-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 14, 0.72);
+  padding: 24px;
+}
+
+.whiteboard-header {
+  width: min(960px, 94vw);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #161b22;
+  border: 1px solid #2a323d;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+}
+
+.whiteboard-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e6edf3;
+}
+
+.whiteboard-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.whiteboard-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #3a2b2b;
+  color: #f0b3b3;
+  border: 1px solid #5a3a3a;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.whiteboard-clear:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.whiteboard-clear:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.whiteboard-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  color: #9aa4b1;
+  border: 1px solid #2a323d;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.whiteboard-close:hover {
+  color: #e6edf3;
+  border-color: #3a4250;
+}
+
+.whiteboard-error {
+  width: min(960px, 94vw);
+  padding: 8px 14px;
+  background: #3a2323;
+  color: #f0b3b3;
+  border: 1px solid #5a3a3a;
+  border-top: none;
+  font-size: 13px;
+}
+
+.whiteboard-canvas {
+  width: min(960px, 94vw);
+  height: min(620px, 76vh);
+  border: 1px solid #2a323d;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.whiteboard-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #9aa4b1;
+  font-size: 14px;
+}

@@ -38,6 +38,12 @@ const Schema = z.object({
   // Per-IP rate limit for /v1/auth/*, separate from the sessions limiter.
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  // ---- P1-C whiteboard (docs/contracts.md "Whiteboard") ----
+  // Snapshot byte cap enforced on PUT (frozen contract constant).
+  WHITEBOARD_MAX_SNAPSHOT_BYTES: z.coerce.number().int().positive().default(262144),
+  // PUT rate limit: per user per board (frozen contract defaults 30/hour).
+  WHITEBOARD_PUT_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(30),
+  WHITEBOARD_PUT_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(3_600_000),
 });
 
 export type Config = z.infer<typeof Schema>;

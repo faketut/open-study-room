@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, type Participant } from "livekit-client";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff,
-  MessageSquare, StickyNote, X, Settings, Shield, Timer,
+  MessageSquare, StickyNote, X, Settings, Shield, Timer, PenLine,
 } from "lucide-react";
 import { SpatialCanvas } from "./SpatialCanvas";
 import { TouchJoystick } from "./TouchJoystick";
@@ -87,7 +87,14 @@ import { localizeText, pickUiLang } from "../domain/templateRegistry";
 import { MeetingView } from "./MeetingView";
 import { MiniPanel } from "./MiniPanel";
 import { BoardModal } from "./BoardModal";
+import { WhiteboardPanel } from "./WhiteboardPanel";
 import type { ConnectCache } from "../data/connectionController";
+import {
+  closeWhiteboardSession,
+  openWhiteboardSession,
+  reattachWhiteboardRoom,
+} from "../data/whiteboardSession";
+import { whiteboardAllowedIn } from "../domain/whiteboard";
 import {
   deriveStatus,
   statusMeta,
@@ -223,13 +230,79 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   const [zoneKind, setZoneKind] = useState<ZoneKind>("none");
   const zoneKindRef = useRef<ZoneKind>("none");
   useEffect(() => { zoneKindRef.current = zoneKind; }, [zoneKind]);
-  /** T4 push-to-talk: Space held while in a silent zone. Mic-only. */
-  const [pttHeld, setPttHeld] = useState(false);
-  const pttHeldRef = useRef(false);
   /** Last published zone (id + kind). Debounces attribute writes: we only
    *  call setZoneAttributes on boundary crossings, never for movement
    *  inside the same zone. */
   const lastZoneRef = useRef<{ id: string; kind: ZoneKind } | null>(null);
+  // P1-C: discussion-zone shared whiteboard. `wbZoneId` is the zone whose
+  // board panel is open (null = closed). NOTE: this is unrelated to the
+  // GitHub PR "board" above (BoardModal, F key) — different feature, and
+  // the reason the whiteboard entry uses the B key instead of F.
+  const [wbZoneId, setWbZoneId] = useState<string | null>(null);
+  const wbZoneIdRef = useRef<string | null>(null);
+  useEffect(() => { wbZoneIdRef.current = wbZoneId; }, [wbZoneId]);
+  /** LiveKit Room the whiteboard session currently publishes on. Updated
+   *  on open and on reconnect swaps (App replaces the Room object). */
+  const wbRoomRef = useRef<Room | null>(null);
+
+  /** Open the whiteboard for the current discussion zone. No-op unless the
+   *  avatar is inside a `discussion` zone right now (contract §1/§3). */
+  const openWhiteboard = useCallback(() => {
+    if (wbZoneIdRef.current != null) return; // already open
+    const z = lastZoneRef.current;
+    if (!z || !whiteboardAllowedIn(z.kind) || z.id === "") return;
+    const backendUrl = cache?.backendUrl;
+    const token = cache?.session?.token;
+    const userId = cache?.session?.userId;
+    const roomName = cache?.room;
+    if (!backendUrl || !token || !userId || !roomName) return;
+    openWhiteboardSession({
+      livekitRoom: room,
+      room: roomName,
+      zoneId: z.id,
+      backendUrl,
+      token,
+      userId,
+    });
+    wbRoomRef.current = room;
+    setWbZoneId(z.id);
+  }, [cache, room]);
+  /** Ref mirror so the once-bound keydown handler can call the latest
+   *  `openWhiteboard` without re-binding. */
+  const openWhiteboardRef = useRef(openWhiteboard);
+  useEffect(() => { openWhiteboardRef.current = openWhiteboard; }, [openWhiteboard]);
+
+  /** Close the whiteboard panel and cancel the pending debounce timer so no
+   *  broadcast fires after leaving the zone (contract §3). Idempotent. */
+  const closeWhiteboard = useCallback(() => {
+    closeWhiteboardSession();
+    wbRoomRef.current = null;
+    setWbZoneId(null);
+  }, []);
+
+  // P1-C (contract §3): boards exist only in discussion zones. Crossing
+  // into silent/rest/none closes the panel immediately — M1's quiet/break
+  // semantics take precedence over keeping a drawing surface open — and
+  // cancels the pending debounce timer.
+  useEffect(() => {
+    if (zoneKind !== "discussion" && wbZoneId != null) {
+      closeWhiteboard();
+    }
+  }, [zoneKind, wbZoneId, closeWhiteboard]);
+
+  // P1-C (contract §2b): on room rejoin / data-channel reconnect the
+  // connection controller swaps the Room object (App re-renders us with a
+  // new `room`). Re-point the session and re-pull the REST snapshot so the
+  // open board converges to the latest server state.
+  useEffect(() => {
+    if (wbZoneId != null && wbRoomRef.current !== room) {
+      wbRoomRef.current = room;
+      reattachWhiteboardRoom(room);
+    }
+  }, [room, wbZoneId]);
+  /** T4 push-to-talk: Space held while in a silent zone. Mic-only. */
+  const [pttHeld, setPttHeld] = useState(false);
+  const pttHeldRef = useRef(false);
   /** Mic intent remembered at silent entry (contract: `intendedMicOn`). */
   const intendedMicOnRef = useRef(true);
   /** Ref mirror of `userMuted` so the once-bound keydown handler and the
@@ -702,6 +775,14 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         void publishReliable(room, encodeReaction(DEFAULT_REACTION_INDEX)).catch(
           (err) => console.warn("publish reaction failed", err),
         );
+      } else if (e.key.toLowerCase() === "b") {
+        // P1-C: open the discussion-zone whiteboard. Key choice: F opens
+        // the GitHub PR board modal (BoardModal), E sits/stands, T chats,
+        // M mutes, R reacts — B is the free mnemonic for "whiteBoard".
+        // `openWhiteboard` itself no-ops outside discussion zones, so the
+        // key is harmless elsewhere.
+        e.preventDefault();
+        openWhiteboardRef.current?.();
       } else if (e.key === "Escape") {
         // Close any note or board modal.
         if (readingNoteIndexRef.current != null) {
@@ -946,6 +1027,15 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           lastZoneRef.current = { id: zoneId, kind };
           setZoneKind(kind);
           zoneKindRef.current = kind;
+          // P1-C (contract §3): boards are per discussion zone. Leaving the
+          // zone the open board belongs to — including crossing into a
+          // *different* discussion zone — closes the panel immediately and
+          // cancels the pending debounce timer. (Kind changes out of
+          // discussion are also covered by the zoneKind effect; this call
+          // is idempotent.)
+          if (wbZoneIdRef.current != null && wbZoneIdRef.current !== zoneId) {
+            closeWhiteboard();
+          }
           void setZoneAttributes(room, zoneId, kind).catch((err) =>
             console.warn("setZoneAttributes failed", err),
           );
@@ -1483,6 +1573,12 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
                 Press <span className="key">F</span> to open board
               </div>
             )}
+            {/* P1-C: whiteboard hint, discussion zones only. */}
+            {zoneKind === "discussion" && wbZoneId == null && (
+              <div className="peers">
+                Press <span className="key">B</span> for the shared whiteboard
+              </div>
+            )}
           </>
         )}
         {zoneKind === "silent" && (
@@ -1604,6 +1700,22 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         {sharingScreen ? <MonitorOff size={14} aria-hidden="true" /> : <Monitor size={14} aria-hidden="true" />}
         <span>{sharingScreen ? "Stop share" : "Share screen"}</span>
       </button>
+      {/* P1-C: whiteboard entry. Desktop-only (mobile uses the FAB below);
+          visible only inside discussion zones (contract §3 — the open
+          button is hidden elsewhere). */}
+      {zoneKind === "discussion" && wbZoneId == null && !isCoarsePointer && (
+        <button
+          type="button"
+          className="wb-toggle"
+          onClick={openWhiteboard}
+          title="Open the shared whiteboard for this discussion zone (B)"
+          aria-label="Open whiteboard"
+        >
+          <PenLine size={14} aria-hidden="true" />
+          <span>Whiteboard</span>
+          <span className="key" style={{ marginLeft: 6 }}>B</span>
+        </button>
+      )}
       <MobileDrawer
         open={videoOpen}
         onClose={() => setVideoOpen(false)}
@@ -1696,6 +1808,21 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         >
           👥
         </button>
+        {/* P1-C: whiteboard entry (touch). Same MW1 contextual-button
+            pattern as the other FABs (coarse-pointer CSS gate on the
+            stack): visible only inside discussion zones, hidden elsewhere
+            per contract §3. */}
+        {zoneKind === "discussion" && wbZoneId == null && (
+          <button
+            type="button"
+            className="fab"
+            onClick={openWhiteboard}
+            aria-label="Whiteboard"
+            title="Open the shared whiteboard for this discussion zone"
+          >
+            🎨
+          </button>
+        )}
         {seated && (
           <button
             type="button"
@@ -1722,6 +1849,18 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           title={map.objects[viewingBoardIndex].label}
           repo={map.objects[viewingBoardIndex].repo}
           onClose={() => setViewingBoardIndex(null)}
+        />
+      )}
+      {/* P1-C: discussion-zone shared whiteboard. Mounts only when open —
+          the Excalidraw chunk is lazy-loaded on first mount, never on room
+          entry (contract §5). Auto-closes on zone exit via the zoneKind
+          effect above. */}
+      {wbZoneId != null && (
+        <WhiteboardPanel
+          room={cache?.room ?? ""}
+          zoneId={wbZoneId}
+          isHost={self?.role === "host"}
+          onClose={closeWhiteboard}
         />
       )}
       {/* MW1-1: touch joystick (coarse pointers only; internal mount gate). */}

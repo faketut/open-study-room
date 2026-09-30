@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import { loadConfig } from "./config.js";
 import { openDb, isMuted, parseAllowlist } from "./db.js";
 import type { AdminAllowlist } from "./db.js";
-import { TokenSigner, createRoomMutator, createRoomAdmin } from "./livekit.js";
+import { TokenSigner, createRoomMutator, createRoomAdmin, createRoomBroadcaster } from "./livekit.js";
 import { ZoneMutePolicy } from "./zones.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -12,6 +12,7 @@ import { registerStateRoutes } from "./routes/state.js";
 import { registerChannelRoutes } from "./routes/channels.js";
 import { registerModerationRoutes } from "./routes/moderation.js";
 import { registerFocusRoutes } from "./routes/focus.js";
+import { registerWhiteboardRoutes } from "./routes/whiteboards.js";
 
 export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
   const cfg = loadConfig(overrideEnv ?? process.env);
@@ -81,6 +82,24 @@ export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
   await registerFocusRoutes(app, {
     db,
     apiSecret: cfg.LIVEKIT_API_SECRET,
+  });
+  // P1-C whiteboard: discussion-zone shared board (Excalidraw snapshot
+  // persistence). The `wb_clear` fan-out is a room-wide reliable broadcast
+  // over RoomServiceClient.sendData (M2 kick-notice transport).
+  await registerWhiteboardRoutes(app, {
+    db,
+    apiSecret: cfg.LIVEKIT_API_SECRET,
+    allowlist,
+    clearFanout: createRoomBroadcaster(
+      cfg.LIVEKIT_URL,
+      cfg.LIVEKIT_API_KEY,
+      cfg.LIVEKIT_API_SECRET,
+    ),
+    maxSnapshotBytes: cfg.WHITEBOARD_MAX_SNAPSHOT_BYTES,
+    putRateLimit: {
+      max: cfg.WHITEBOARD_PUT_RATE_LIMIT_MAX,
+      windowMs: cfg.WHITEBOARD_PUT_RATE_LIMIT_WINDOW_MS,
+    },
   });
 
   app.addHook("onClose", async () => {

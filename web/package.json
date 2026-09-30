@@ -14,9 +14,11 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postbuild": "node scripts/assert-wb-lazy.mjs"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "livekit-client": "^2.5.7",
     "lucide-react": "^1.18.0",
     "react": "^18.3.1",
