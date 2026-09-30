@@ -87,10 +87,9 @@ into `web/public/` by `npm run sync-assets` (runs automatically via
 
 ## Demo
 
-A 52-second screen recording (960×720) of a single user in the pixel-art
-library tilemap: joining, walking through the lobby and reading hall,
-clicking a chair to sit at a Discussion Corner table (focus cocoon zoom),
-starting a focus session, then opening the shared whiteboard (B). Shows the
+A 32-second screen recording (1280×640) of a single user in the hand-painted
+library: joining, walking through the lobby, clicking a chair to sit at a
+Lounge table (focus cocoon zoom), and starting a focus session. Shows the
 contextual English UI — no buttons until you sit down or enter a zone.
 Recorded locally with the real stack (LiveKit `--dev` + Node server +
 production web build, driven by Playwright).
@@ -103,10 +102,9 @@ production web build, driven by Playwright).
 
 > **Note**: single-user recording. Two-user real-time sync is not demonstrated —
 > this sandbox blocks the UDP/WebRTC ICE path LiveKit needs for peer data
-> channels, so only one client is shown. The whiteboard panel opens for real,
-> but Excalidraw's canvas hits a headless-GPU rendering glitch in this VM, so
-> the drawn stroke isn't visible. The UI journey itself (join → walk → sit →
-> focus → whiteboard open) is real.
+> channels, so only one client is shown. The UI journey itself
+> (join → walk → sit → focus) is real. Zone changes use a sandbox-only
+> teleport hook; walking, the chair click, sitting, and focus are real.
 
 ## Tests
 
