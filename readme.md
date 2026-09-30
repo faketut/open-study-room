@@ -92,7 +92,7 @@ walking to the discussion corner, sitting at a table, and starting a focus
 session. Recorded locally with the real stack (LiveKit `--dev` + Node server +
 production web build, driven by Playwright).
 
-<video src="docs/demo.mp4" width="640" controls></video>
+📹 [Watch the demo (docs/demo.mp4)](docs/demo.mp4)
 
 > **Note**: recorded in a sandboxed environment without UDP. WebRTC ICE could
 > not establish (LiveKit's TCP mux did not service inbound connections), so
