@@ -19,19 +19,15 @@
 
 ## Architecture
 
-```
-┌─────────────┐      WebSocket / REST       ┌──────────────────┐
-│  Web client │ ◄──────────────────────────► │  Node backend    │
-│ React+Vite  │      POST /v1/sessions       │  Fastify+SQLite  │
-│ TypeScript  │      POST /v1/rooms/:room/    │  signs LiveKit   │
-└──────┬──────┘      state                    │  JWTs, stores    │
-       │ WebRTC (audio/video/data)           │  room snapshots  │
-       └────────────────────────────────────►└──────────────────┘
-                              ┌──────────────────┐
-                              │  LiveKit SFU     │
-                              │  media + 17-byte │
-                              │  position packets│
-                              └──────────────────┘
+```mermaid
+flowchart LR
+    WEB["Web client<br/>React + Vite + TypeScript"]
+    SRV["Node backend<br/>Fastify + SQLite<br/>signs LiveKit JWTs · stores room snapshots"]
+    LK["LiveKit SFU<br/>media + 17-byte position packets"]
+
+    WEB <-->|"HTTPS / REST<br/>sessions · reports · focus · auth"| SRV
+    WEB <-->|"WebRTC<br/>on-demand audio/video · DataChannel"| LK
+    SRV -->|"Server API<br/>mute · removeParticipant"| LK
 ```
 
 | Part | Stack | Role |
