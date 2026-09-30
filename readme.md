@@ -87,10 +87,11 @@ into `web/public/` by `npm run sync-assets` (runs automatically via
 
 ## Demo
 
-A 41-second screen recording (960×720) of a single user in the redesigned
-library template: joining, walking through the lobby, sitting at a Discussion
-Corner table (E), starting a focus session, then opening the shared whiteboard
-(B). Shows the contextual UI — no buttons until you sit down or enter a zone.
+A 42-second screen recording (960×720) of a single user in the pixel-art
+library tilemap: joining, walking through the lobby and reading hall,
+clicking a chair to sit at a Discussion Corner table (focus cocoon zoom),
+starting a focus session, then opening the shared whiteboard (B). Shows the
+contextual English UI — no buttons until you sit down or enter a zone.
 Recorded locally with the real stack (LiveKit `--dev` + Node server +
 production web build, driven by Playwright).
 
