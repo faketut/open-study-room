@@ -29,14 +29,12 @@ export interface SpriteRect {
   sh: number;
 }
 
-export type SpriteSheetKey = "walls" | "furniture" | "carpets" | "tilation";
+export type SpriteSheetKey = "walls" | "furniture" | "carpets";
 
 export const SHEET_URLS: Record<SpriteSheetKey, string> = {
   walls:     "/sprites/walls-floor-doors.png",
   furniture: "/sprites/furniture.png",
   carpets:   "/sprites/carpets.png",
-  // CC BY-SA 4.0 by Tilation — see tilation-ATTRIBUTION.txt next to the PNG.
-  tilation:  "/sprites/tilation-16x16.png",
 };
 
 /** Tile used to repeat-fill the floor. Brick interior; (16,16) is the
@@ -143,50 +141,3 @@ export const RUG_TILE: SpriteRect = {
   sx: 16, sy: 16, sw: 16, sh: 16,
 };
 
-/** Named tiles from the Tilation 16×16 Small Indoor Tileset
- *  (CC BY-SA 4.0 — see web/public/sprites/tilation-ATTRIBUTION.txt).
- *  Sheet is 8 cols × 27 rows; index = row*8+col. Coordinates below were
- *  verified against the sheet on 2026-09-30.
- *
- *  Used by the library template's `tilegrid` (numeric indices) and as
- *  documentation for authors. The tilemap renderer reads the grid, not
- *  this catalog — this exists so humans don't have to memorize numbers. */
-function t(row: number, col: number): SpriteRect {
-  return { sheet: "tilation", sx: col * 16, sy: row * 16, sw: 16, sh: 16 };
-}
-
-export const TILATION_TILE = 16;
-export const TILATION_COLS = 8;
-export const TILATION_ROWS = 27;
-
-export const TILATION: Record<string, SpriteRect> = {
-  // Floors — plain carpet centers (no border).
-  carpet_red:    t(1, 7),
-  carpet_blue:   t(7, 7),
-  carpet_pink:   t(13, 7),
-  // Walls — 1-tile bands.
-  wall_h:        t(18, 5), // horizontal wall middle
-  wall_v:        t(18, 0), // vertical wall middle
-  // Furniture (re-verified tile-by-tile 2026-09-30 after a one-row offset
-  // was caught in review — do not "fix" these from memory).
-  bookshelf:     t(23, 3),
-  chair_wood:    t(24, 3),
-  stool:         t(23, 5),
-  side_table:    t(23, 6),
-  wood_table:    t(23, 7),
-  bed_blue:      t(23, 0),
-  bed_red:       t(23, 1),
-  bed_purple:    t(23, 2),
-  plant_leafy:   t(24, 4),
-  plant_pink:    t(24, 5),
-  plant_red:     t(24, 6),
-  chest:         t(24, 7),
-  fireplace:     t(25, 0),
-  armchair_blue: t(25, 1),
-  armchair_red:  t(25, 2),
-  armchair_purple: t(25, 3),
-  barrel:        t(25, 4),
-  candle:        t(26, 1),
-  mugs:          t(25, 7),
-  door:          t(20, 2),
-};

@@ -23,21 +23,6 @@ export interface RawTable extends RawRect {
   id: string;
 }
 
-/** Tilemap visual layer (contracts.md "Pixel-art tilemap" §2). Row-major
- *  `grid` of tile indices into the 8-column Tilation sheet
- *  (`index = row*8+col`); `-1` = transparent. One tile = 16×16 world
- *  units, so `cols*16` must equal the map `width` and `rows*16` the map
- *  `height` (validator-enforced). Visual only — collision/sit-targets/
- *  zones stay in `objects`. */
-export interface RawTileGrid {
-  cols: number;
-  rows: number;
-  grid: number[];
-  /** Optional overlay layer (same dims): furniture tiles with transparency
-   *  (chairs, plants). Drawn after `grid` so the floor shows through. */
-  deco?: number[];
-}
-
 export interface RawMapObject extends RawRect {
   id?: string;
   type: MapObjectType;
@@ -82,12 +67,6 @@ export interface RawMapConfig {
   walkable_areas?: RawRect[];
   tables?: RawTable[];
   objects?: RawMapObject[];
-  /** Tilemap visual layer. When present with `tileVisual: true`, the
-   *  renderer draws this grid instead of procedural wall/table/chair/
-   *  cabinet/plant/rug bodies. */
-  tilegrid?: RawTileGrid;
-  /** Opt-in flag for the tilemap visual layer (§2). */
-  tileVisual?: boolean;
   collision_settings?: {
     type: string;
     strict_mode: boolean;
@@ -163,16 +142,6 @@ export interface MapObject extends Rect {
   sprite?: string;
 }
 
-export interface TileGrid {
-  cols: number;
-  rows: number;
-  /** Row-major, `rows*cols` entries; `-1` = transparent, else an index
-   *  into the 8-column Tilation sheet (`row*8+col`). */
-  grid: number[];
-  /** Optional overlay layer (same dims, `-1` = empty). Drawn after `grid`. */
-  deco: number[] | null;
-}
-
 export interface MapConfig {
   name: string;
   /** null when authored procedurally (no painted background). */
@@ -186,11 +155,5 @@ export interface MapConfig {
   tables: Table[];
   /** Renderable + collidable entities (procedural mode). Empty in legacy. */
   objects: MapObject[];
-  /** Tilemap visual layer; null when the template doesn't author one. */
-  tilegrid: TileGrid | null;
-  /** When true, the tile grid is the visual layer: the renderer skips
-   *  procedural bodies for wall/table/desk/chair/cabinet/plant/rug but
-   *  keeps them for collision/logic. */
-  tileVisual: boolean;
   bounds: { x: number; y: number; width: number; height: number };
 }

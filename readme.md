@@ -87,12 +87,13 @@ into `web/public/` by `npm run sync-assets` (runs automatically via
 
 ## Demo
 
-A 32-second screen recording (1280×640) of a single user in the hand-painted
-library: joining, walking through the lobby, clicking a chair to sit at a
-Lounge table (focus cocoon zoom), and starting a focus session. Shows the
-contextual English UI — no buttons until you sit down or enter a zone.
-Recorded locally with the real stack (LiveKit `--dev` + Node server +
-production web build, driven by Playwright).
+A 27-second screen recording (1280×640) of a single user in the hand-painted
+library: joining, walking north from the lobby through the corridor, west
+along the corridor into the lounge, clicking a chair to sit (focus cocoon
+zoom), and starting a focus session. Shows the contextual English UI — no
+buttons until you sit down or enter a zone. Recorded locally with the real
+stack (LiveKit `--dev` + Node server + production web build, driven by
+Playwright).
 
 <video src="docs/demo.mp4" poster="docs/demo-poster.png" controls width="640">
   <a href="docs/demo.mp4">Watch the demo (docs/demo.mp4)</a>
@@ -102,9 +103,8 @@ production web build, driven by Playwright).
 
 > **Note**: single-user recording. Two-user real-time sync is not demonstrated —
 > this sandbox blocks the UDP/WebRTC ICE path LiveKit needs for peer data
-> channels, so only one client is shown. The UI journey itself
-> (join → walk → sit → focus) is real. Zone changes use a sandbox-only
-> teleport hook; walking, the chair click, sitting, and focus are real.
+> channels, so only one client is shown. All movement is real walking
+> (WASD); the UI journey (join → walk → sit → focus) is real.
 
 ## Tests
 
@@ -187,9 +187,5 @@ silent 区强制静音（服务端执行）、discussion 区按距离衰减语�
 
 ## Credits
 
-- Map tiles: **"16x16 Small Indoor Tileset" by [Tilation](https://tilation.itch.io/16x16-small-indoor-tileset)**,
-  licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
-  The file `assets/sprites/tilation-16x16.png` is a byte-identical copy of the
-  upstream PNG and stays CC BY-SA 4.0 (see
-  `assets/sprites/tilation-ATTRIBUTION.txt`) — a license exception inside this
-  otherwise MIT-licensed repository.
+- Hand-painted library background (`assets/backgrounds/library-painted.jpg`):
+  AI-generated for this project.

@@ -56,10 +56,6 @@ const COVERAGE_GRID_PX = 40;
 const MAX_UNZONED_SAMPLES = 8;
 /** Q10: warn when the floor area per table drops below this (overcrowded). */
 const MIN_AREA_PER_TABLE_PX2 = 20_000;
-/** Tilemap (contracts.md "Pixel-art tilemap" §2): one tile = 16 world units;
- *  the Tilation sheet holds 8×27 = 216 tiles. */
-const TILE_WORLD_PX = 16;
-const TILATION_TILE_COUNT = 216;
 
 interface Rect {
   x: number;
@@ -209,81 +205,6 @@ export function validateTemplate(raw: unknown): TemplateValidation {
     errors.push(
       'map: either "background_color" or "background_image" is required',
     );
-  }
-
-  // ---- Q11: tilegrid (contracts.md "Pixel-art tilemap" §2) ----
-  // Optional. When present it must be a well-formed row-major grid whose
-  // dims match the map footprint (cols*16 == width, rows*16 == height)
-  // and whose indices are -1 (transparent) or a valid Tilation sheet
-  // index [0, 216). tileVisual:true requires a valid tilegrid.
-  const tg = raw["tilegrid"];
-  let tilegridOk = false;
-  if (tg !== undefined) {
-    if (!isRecord(tg)) {
-      errors.push("map.tilegrid: must be an object { cols, rows, grid } when present");
-    } else {
-      const { cols, rows, grid } = tg;
-      const dimsOk =
-        Number.isInteger(cols) && (cols as number) > 0 &&
-        Number.isInteger(rows) && (rows as number) > 0;
-      if (!dimsOk) {
-        errors.push("map.tilegrid: cols and rows must be positive integers");
-      } else if (!Array.isArray(grid) || grid.length !== (cols as number) * (rows as number)) {
-        errors.push(
-          `map.tilegrid: grid must be an array of cols*rows = ${(cols as number) * (rows as number)} integers ` +
-            `(got ${Array.isArray(grid) ? grid.length : typeof grid})`,
-        );
-      } else {
-        const badIdx = (grid as unknown[]).findIndex(
-          (v) => !Number.isInteger(v) || (v as number) < -1 || (v as number) >= TILATION_TILE_COUNT,
-        );
-        if (badIdx >= 0) {
-          errors.push(
-            `map.tilegrid: grid[${badIdx}] = ${JSON.stringify((grid as unknown[])[badIdx])} — ` +
-              `indices must be -1 (transparent) or in [0, ${TILATION_TILE_COUNT})`,
-          );
-        } else {
-          // Optional deco overlay: same dims, same index rules.
-          const { deco } = tg;
-          if (deco !== undefined) {
-            const badDeco =
-              !Array.isArray(deco) || deco.length !== (cols as number) * (rows as number)
-                ? -2
-                : (deco as unknown[]).findIndex(
-                    (v) => !Number.isInteger(v) || (v as number) < -1 || (v as number) >= TILATION_TILE_COUNT,
-                  );
-            if (badDeco === -2) {
-              errors.push(
-                `map.tilegrid: deco must be an array of cols*rows = ${(cols as number) * (rows as number)} integers when present`,
-              );
-            } else if (badDeco >= 0) {
-              errors.push(
-                `map.tilegrid: deco[${badDeco}] = ${JSON.stringify((deco as unknown[])[badDeco])} — ` +
-                  `indices must be -1 (empty) or in [0, ${TILATION_TILE_COUNT})`,
-              );
-            }
-          }
-          if (widthOk && heightOk) {
-            if ((cols as number) * TILE_WORLD_PX !== (width as number)) {
-              errors.push(
-                `map.tilegrid: cols*${TILE_WORLD_PX} (${(cols as number) * TILE_WORLD_PX}) must equal map width (${width})`,
-              );
-            } else if ((rows as number) * TILE_WORLD_PX !== (height as number)) {
-              errors.push(
-                `map.tilegrid: rows*${TILE_WORLD_PX} (${(rows as number) * TILE_WORLD_PX}) must equal map height (${height})`,
-              );
-            } else {
-              tilegridOk = true;
-            }
-          } else {
-            tilegridOk = true; // dims already errored under Q2; don't pile on
-          }
-        }
-      }
-    }
-  }
-  if (raw["tileVisual"] === true && !tilegridOk) {
-    errors.push("map.tileVisual: true requires a valid map.tilegrid");
   }
 
   // ---- objects: per-object checks (Q7 + type/kind/id rules) ----

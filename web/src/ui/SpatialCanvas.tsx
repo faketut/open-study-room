@@ -34,12 +34,8 @@ export function SpatialCanvas({
   // the sheet hasn't loaded yet (or failed) — renderer falls back to
   // procedural drawing in that case.
   const sheetsRef = useRef<Record<SpriteSheetKey, HTMLImageElement | null>>({
-    walls: null, furniture: null, carpets: null, tilation: null,
+    walls: null, furniture: null, carpets: null,
   });
-  // Prerendered tilemap layer (contracts.md "Pixel-art tilemap" §2): the
-  // tile grid baked once at 2× onto an offscreen canvas, blitted per frame.
-  // `null` = not built yet (sheet still loading or map has no tilegrid).
-  const tilemapRef = useRef<HTMLCanvasElement | null>(null);
   // Character portraits are 50 separate tiny PNGs (~300 B each). We load
   // each on first request, keyed by URL, and reuse from this cache for
   // subsequent frames. Map miss = sprite not yet loaded, render falls
@@ -50,7 +46,7 @@ export function SpatialCanvas({
   // viewport scale changes.
   const floorPatternRef = useRef<{ pattern: CanvasPattern; scale: number } | null>(null);
   const map = useSyncle((s) => s.map);
-  // Focus cocoon (contracts.md "Pixel-art tilemap" §6): live zoom multiplier,
+  // Focus cocoon (contracts.md "Focus cocoon"): live zoom multiplier,
   // lerped toward its target each frame. 1 = normal, ~1.7 = cocooned.
   const zoomRef = useRef(1);
   const reducedMotionRef = useRef(false);
@@ -102,64 +98,6 @@ export function SpatialCanvas({
     };
   }, []);
 
-  // Build the tilemap prerender when the tilation sheet is available and the
-  // map authors a tilegrid. 2× supersampling keeps pixels crisp under the
-  // focus-cocoon zoom (contracts.md "Pixel-art tilemap" §2).
-  useEffect(() => {
-    tilemapRef.current = null;
-    if (!map || !map.tileVisual || !map.tilegrid) return;
-    let cancelled = false;
-    let tries = 0;
-    const build = () => {
-      if (cancelled) return;
-      const sheet = sheetsRef.current.tilation;
-      if (!sheet) {
-        // Sheet still loading — retry briefly; give up after ~3 s and fall
-        // back to procedural rendering (tileVisual bodies still skipped, so
-        // the map will look sparse rather than broken — see drawObjects).
-        if (++tries < 30) setTimeout(build, 100);
-        return;
-      }
-      const { cols, rows, grid, deco } = map.tilegrid!;
-      const SS = 2; // supersample factor
-      const off = document.createElement("canvas");
-      off.width = cols * 16 * SS;
-      off.height = rows * 16 * SS;
-      const octx = off.getContext("2d");
-      if (!octx) return;
-      octx.imageSmoothingEnabled = false;
-      const SHEET_COLS = 8;
-      const blit = (idx: number, c: number, r: number) => {
-        if (idx < 0) return;
-        const sr = Math.floor(idx / SHEET_COLS);
-        const sc = idx % SHEET_COLS;
-        octx.drawImage(
-          sheet,
-          sc * 16, sr * 16, 16, 16,
-          c * 16 * SS, r * 16 * SS, 16 * SS, 16 * SS,
-        );
-      };
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          blit(grid[r * cols + c], c, r);
-        }
-      }
-      // Deco overlay (transparent furniture) after the base layer.
-      if (deco) {
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            blit(deco[r * cols + c], c, r);
-          }
-        }
-      }
-      if (!cancelled) tilemapRef.current = off;
-    };
-    build();
-    return () => {
-      cancelled = true;
-    };
-  }, [map]);
-
   // Render loop. Reading from the zustand store via getState() in raf keeps
   // the canvas redrawing every frame without subscribing this component to
   // every peer update.
@@ -197,7 +135,7 @@ export function SpatialCanvas({
         return;
       }
 
-      // Focus cocoon (contracts.md "Pixel-art tilemap" §6): when seated,
+      // Focus cocoon (contracts.md "Focus cocoon"): when seated,
       // push the camera toward ~1.7× centered on the table; ease back to
       // 1× on stand. Pure client-side. Reduced-motion users get no zoom.
       const seatedTable = self.tableId != null
@@ -296,26 +234,16 @@ export function SpatialCanvas({
         ctx.fillRect(floorX, floorY, floorW, floorH);
       }
 
-      // Tilemap visual layer (contracts.md "Pixel-art tilemap" §2): the
-      // prerendered grid blitted over the floor, 1:1 with world units.
-      const tilemap = tilemapRef.current;
-      const tileLayerReady = map.tileVisual && !!tilemap;
-      if (tileLayerReady && tilemap) {
-        ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(tilemap, floorX, floorY, floorW, floorH);
-      }
-
       // Procedural objects (walls, tables, chairs, plants, ...) — only when
       // the map authored them. Legacy painted maps fall back to the debug
       // walkable outlines so authors can still see the collision rects.
-      // In tileVisual mode with a ready tile layer, or in painted-background
-      // mode (the bitmap already shows the furniture), drawObjects skips the
-      // procedural bodies the artwork already shows (but keeps rings, zone
-      // label chips, board/door/portal overlays).
+      // In painted-background mode (the bitmap already shows the furniture),
+      // drawObjects skips the procedural bodies the artwork already shows
+      // (but keeps rings, zone label chips, board/door/portal overlays).
       const paintedBg = !!map.backgroundImage && !!bg;
       const occupancy = computeOccupancy(state);
       if (map.objects.length > 0) {
-        drawObjects(ctx, map, vp, occupancy, highlightRef.current, highlightNoteRef.current, sheetsRef.current, tileLayerReady || paintedBg, paintedBg);
+        drawObjects(ctx, map, vp, occupancy, highlightRef.current, highlightNoteRef.current, sheetsRef.current, paintedBg, paintedBg);
       } else {
         drawDebugWalkable(ctx, map, vp);
         // Legacy table outlines (procedural path draws them in drawObjects).
@@ -469,16 +397,16 @@ function drawFloorGrid(
 // extending the visual style for a new type means adding a case here plus
 // a SOLID_TYPES entry in domain/mapConfig.ts. Draw order matches the JSON
 // order so authors can stack things (e.g. rug before chair).
-/** Object types whose procedural bodies are covered by the tilemap visual
- *  layer (contracts.md "Pixel-art tilemap" §2). When the tile layer is
- *  ready, these bodies are skipped; tables keep their ring + label. */
-const TILE_COVERED_TYPES: ReadonlySet<MapObjectType> = new Set([
+/** Object types whose procedural bodies are covered by the painted-background
+ *  visual layer (contracts.md "Painted background"). When the painted layer
+ *  is ready, these bodies are skipped; tables keep their ring + label. */
+const PAINTED_COVERED_TYPES: ReadonlySet<MapObjectType> = new Set([
   "wall", "table", "desk", "chair", "cabinet", "plant", "rug",
 ]);
 
 /** Table highlight/occupancy ring + label, without the procedural body.
- *  Used in tilemap mode so sit targets, occupancy, and the queue/overflow
- *  pulse highlights still read over the tiles. */
+ *  Used in painted-background mode so sit targets, occupancy, and the
+ *  queue/overflow pulse highlights still read over the artwork. */
 function drawTableRing(
   ctx: CanvasRenderingContext2D,
   obj: MapObject,
@@ -516,8 +444,8 @@ function drawObjects(
   highlightTable: string | null,
   highlightNoteIndex: number | null,
   sheets: Record<SpriteSheetKey, HTMLImageElement | null>,
-  /** contracts.md "Pixel-art tilemap" §2: when the tile layer is ready,
-   *  skip procedural bodies for types the tiles already show. Rings,
+  /** contracts.md "Painted background": when the painted layer is ready,
+   *  skip procedural bodies for types the artwork already shows. Rings,
    *  zone tints and board/door/portal overlays are preserved. */
   skipBodies = false,
   /** Painted-background mode: the bitmap already shows walls/furniture.
@@ -541,10 +469,10 @@ function drawObjects(
       const isHighlighted =
         (obj.type === "table" && obj.id != null && obj.id === highlightTable) ||
         (obj.type === "note" && i === highlightNoteIndex);
-      // Tilemap mode: the tiles already show these bodies. Tables keep
+      // Painted-background mode: the artwork already shows these bodies. Tables keep
       // their highlight/occupancy ring + label so sit targets and the
       // queue/overflow highlights still read in context.
-      if (skipBodies && TILE_COVERED_TYPES.has(obj.type)) {
+      if (skipBodies && PAINTED_COVERED_TYPES.has(obj.type)) {
         if (obj.type === "table") drawTableRing(ctx, obj, x, y, w, h, count, isHighlighted);
         continue;
       }

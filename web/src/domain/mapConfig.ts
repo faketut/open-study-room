@@ -5,7 +5,6 @@ import type {
   RawMapConfig,
   Rect,
   Table,
-  TileGrid,
 } from "../types/mapConfig";
 import { normalizeZoneKind } from "./zones";
 import { CUSTOM_MAP_STORAGE_KEY, CUSTOM_MAP_URL } from "./mapAuthoring";
@@ -101,38 +100,7 @@ export async function loadMapConfig(url = "/map_config.json"): Promise<MapConfig
     walkable,
     tables,
     objects,
-    // Tilemap visual layer (contracts.md "Pixel-art tilemap" §2). Shallow
-    // validation here (shape only); the template validator enforces dims
-    // and index ranges. A malformed grid degrades to null (no tile layer)
-    // rather than crashing the renderer.
-    tilegrid: sanitizeTileGrid(raw.tilegrid),
-    tileVisual: raw.tileVisual === true && sanitizeTileGrid(raw.tilegrid) !== null,
     bounds,
-  };
-}
-
-/** Shape-check a raw tile grid. Returns null when absent or malformed. */
-function sanitizeTileGrid(
-  raw: RawMapConfig["tilegrid"],
-): TileGrid | null {
-  if (!raw || typeof raw !== "object") return null;
-  const { cols, rows, grid, deco } = raw;
-  if (
-    !Number.isInteger(cols) || cols <= 0 ||
-    !Number.isInteger(rows) || rows <= 0 ||
-    !Array.isArray(grid) || grid.length !== cols * rows
-  ) {
-    return null;
-  }
-  const clean = (v: unknown) => (Number.isInteger(v) ? (v as number) : -1);
-  return {
-    cols,
-    rows,
-    grid: grid.map(clean),
-    deco:
-      Array.isArray(deco) && deco.length === cols * rows
-        ? deco.map(clean)
-        : null,
   };
 }
 
