@@ -87,7 +87,7 @@ into `web/public/` by `npm run sync-assets` (runs automatically via
 
 ## Demo
 
-A 42-second screen recording (960×720) of a single user in the pixel-art
+A 52-second screen recording (960×720) of a single user in the pixel-art
 library tilemap: joining, walking through the lobby and reading hall,
 clicking a chair to sit at a Discussion Corner table (focus cocoon zoom),
 starting a focus session, then opening the shared whiteboard (B). Shows the
