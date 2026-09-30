@@ -85,6 +85,20 @@ World assets (`assets/map_config.json`, `room1.jpg`, `sprites/`) are copied
 into `web/public/` by `npm run sync-assets` (runs automatically via
 `predev`/`prebuild`).
 
+## Demo
+
+A 42-second screen recording of two users in the library template: joining,
+walking to the discussion corner, sitting at a table, and starting a focus
+session. Recorded locally with the real stack (LiveKit `--dev` + Node server +
+production web build, driven by Playwright).
+
+<video src="docs/demo.mp4" width="640" controls></video>
+
+> **Note**: recorded in a sandboxed environment without UDP. WebRTC ICE could
+> not establish (LiveKit's TCP mux did not service inbound connections), so
+> peer position sync via data channel is not visible; the UI journey itself is
+> real. The whiteboard open was flaky under automation and is not shown.
+
 ## Tests
 
 ```bash
