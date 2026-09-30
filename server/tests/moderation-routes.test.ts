@@ -67,12 +67,14 @@ async function buildFixture(): Promise<Fixture> {
     db,
     signer,
     livekitUrl: "ws://test",
+    allowlist: { githubUsers: [], emails: [] },
     rateLimit: { max: 10_000, timeWindowMs: 60_000 },
   });
   registerStateRoutes(app, { db, apiSecret: API_SECRET, zonePolicy });
   await registerModerationRoutes(app, {
     db,
     apiSecret: API_SECRET,
+    allowlist: { githubUsers: [], emails: [] },
     zonePolicy,
     muter,
     admin,

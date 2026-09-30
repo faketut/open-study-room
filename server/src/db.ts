@@ -1,9 +1,15 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 
 export type Db = Database.Database;
+
+/** sha256 hex of a token/state value. Raw tokens are never stored — only
+ *  their hash (P1-B contract §5/§7). */
+export function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 export interface UserRow {
   id: string;
@@ -12,6 +18,13 @@ export interface UserRow {
   color: string;
   created_at: number;
   last_seen: number;
+  // P1-B identity columns (docs/contracts.md "Identity & login" §1).
+  provider: string; // 'device' | 'github' | 'email'
+  provider_sub: string | null;
+  provider_handle: string | null;
+  email: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
 }
 
 export interface RoomStateRow {
@@ -133,8 +146,38 @@ function migrate(db: Db): void {
     );
     CREATE INDEX IF NOT EXISTS idx_focus_sessions_user_started
       ON focus_sessions(user_id, started_at);
+    -- P1-B lightweight login (docs/contracts.md "Identity & login").
+    -- Table/column names are frozen by the contract; do not rename.
+    CREATE TABLE IF NOT EXISTS login_sessions (
+      id TEXT PRIMARY KEY,            -- uuid
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE, -- sha256 hex of the raw token
+      device_id TEXT,                 -- device that last presented it (info only)
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,    -- created_at + LOGIN_SESSION_TTL_DAYS
+      revoked_at INTEGER,             -- NULL = live
+      last_seen INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id);
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      state_hash TEXT PRIMARY KEY,   -- sha256 hex of the raw state
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,   -- created_at + 10 min (frozen)
+      used INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
+    CREATE TABLE IF NOT EXISTS magic_tokens (
+      token_hash TEXT PRIMARY KEY,   -- sha256 hex of the raw token
+      email TEXT NOT NULL,           -- normalized (lowercase, trimmed)
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,   -- created_at + 15 min (frozen)
+      used_at INTEGER                 -- NULL = unused; single-use
+    );
+    CREATE INDEX IF NOT EXISTS idx_magic_tokens_expires ON magic_tokens(expires_at);
   `);
   ensureRoomStateZoneColumns(db);
+  ensureIdentityColumns(db);
 }
 
 /** M1 zone columns. Kept as a separate step (and exported for tests) so that
@@ -151,6 +194,44 @@ export function ensureRoomStateZoneColumns(db: Db): void {
   if (!cols.includes("zone_kind")) {
     db.exec("ALTER TABLE room_state ADD COLUMN zone_kind TEXT");
   }
+}
+
+/** P1-B identity columns on `users`. Kept as a separate additive step (same
+ *  pattern as the M1 zone columns) so databases created before P1-B gain the
+ *  columns without a rebuild. Existing rows default to `provider='device'`
+ *  with NULL provider columns — the anonymous flow is untouched. The partial
+ *  unique index excludes NULL `provider_sub` rows, so anonymous rows are
+ *  never matched by account lookup. */
+export function ensureIdentityColumns(db: Db): void {
+  const cols = db
+    .prepare<[], { name: string }>("PRAGMA table_info(users)")
+    .all()
+    .map((c) => c.name);
+  if (!cols.includes("provider")) {
+    db.exec(
+      `ALTER TABLE users ADD COLUMN provider TEXT NOT NULL DEFAULT 'device'
+         CHECK (provider IN ('device','github','email'))`,
+    );
+  }
+  if (!cols.includes("provider_sub")) {
+    db.exec("ALTER TABLE users ADD COLUMN provider_sub TEXT");
+  }
+  if (!cols.includes("provider_handle")) {
+    db.exec("ALTER TABLE users ADD COLUMN provider_handle TEXT");
+  }
+  if (!cols.includes("email")) {
+    db.exec("ALTER TABLE users ADD COLUMN email TEXT");
+  }
+  if (!cols.includes("display_name")) {
+    db.exec("ALTER TABLE users ADD COLUMN display_name TEXT");
+  }
+  if (!cols.includes("avatar_url")) {
+    db.exec("ALTER TABLE users ADD COLUMN avatar_url TEXT");
+  }
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider_sub
+       ON users(provider, provider_sub) WHERE provider_sub IS NOT NULL`,
+  );
 }
 
 export function upsertUser(
@@ -176,6 +257,12 @@ export function upsertUser(
     color,
     created_at: now,
     last_seen: now,
+    provider: "device",
+    provider_sub: null,
+    provider_handle: null,
+    email: null,
+    display_name: null,
+    avatar_url: null,
   };
   db.prepare(
     "INSERT INTO users (id, device_id, nickname, color, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)",
@@ -870,4 +957,392 @@ export function getFocusStats(
     totalCompletedSessions: rows.length,
     last7Days,
   };
+}
+
+// ---------- Identity & login (P1-B: lightweight login) ----------
+// Contract: docs/contracts.md "Identity & login (P1-B: lightweight login)".
+// Schemas frozen by the contract; do not rename tables/columns.
+
+export type IdentityProvider = "github" | "email";
+
+export interface UpsertAccountParams {
+  provider: IdentityProvider;
+  /** Provider-unique subject: GitHub numeric id as text, or the normalized
+   *  (lowercased, trimmed) email. */
+  providerSub: string;
+  providerHandle?: string | null;
+  email?: string | null;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  nickname?: string | null;
+  now?: number;
+}
+
+/** Upsert an account row on the frozen matching key `(provider, provider_sub)`
+ *  — a second OAuth login with the same provider account returns the SAME
+ *  `users.id`, so streak, roles, and moderation history follow automatically.
+ *  Account rows get a non-lookup `device_id` placeholder (`'acct:' || id`)
+ *  solely to satisfy the existing NOT NULL UNIQUE constraint; no flow may
+ *  match on it. */
+export function upsertAccount(db: Db, params: UpsertAccountParams): UserRow {
+  const now = params.now ?? Date.now();
+  const existing = db
+    .prepare<[string, string], UserRow>(
+      "SELECT * FROM users WHERE provider = ? AND provider_sub = ?",
+    )
+    .get(params.provider, params.providerSub);
+  if (existing) {
+    const providerHandle = params.providerHandle ?? existing.provider_handle;
+    const email = params.email ?? existing.email;
+    const displayName = params.displayName ?? existing.display_name;
+    const avatarUrl = params.avatarUrl ?? existing.avatar_url;
+    const nickname = params.nickname ?? existing.nickname;
+    db.prepare(
+      `UPDATE users
+         SET provider_handle = ?, email = ?, display_name = ?,
+             avatar_url = ?, nickname = ?, last_seen = ?
+       WHERE id = ?`,
+    ).run(providerHandle, email, displayName, avatarUrl, nickname, now, existing.id);
+    return {
+      ...existing,
+      provider_handle: providerHandle,
+      email,
+      display_name: displayName,
+      avatar_url: avatarUrl,
+      nickname,
+      last_seen: now,
+    };
+  }
+  const id = randomUUID();
+  const nickname =
+    params.nickname ??
+    params.displayName ??
+    params.providerHandle ??
+    params.providerSub;
+  const row: UserRow = {
+    id,
+    device_id: `acct:${id}`,
+    nickname,
+    color: "#4F8EF7",
+    created_at: now,
+    last_seen: now,
+    provider: params.provider,
+    provider_sub: params.providerSub,
+    provider_handle: params.providerHandle ?? null,
+    email: params.email ?? null,
+    display_name: params.displayName ?? null,
+    avatar_url: params.avatarUrl ?? null,
+  };
+  db.prepare(
+    `INSERT INTO users
+       (id, device_id, nickname, color, created_at, last_seen,
+        provider, provider_sub, provider_handle, email, display_name, avatar_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.id,
+    row.device_id,
+    row.nickname,
+    row.color,
+    row.created_at,
+    row.last_seen,
+    row.provider,
+    row.provider_sub,
+    row.provider_handle,
+    row.email,
+    row.display_name,
+    row.avatar_url,
+  );
+  return row;
+}
+
+/** Device → account merge (frozen, contract §6): in ONE transaction, every FK
+ *  row pointing at the device's anonymous row is re-pointed to the account
+ *  row, then the anonymous row is deleted. Idempotent: a missing device row
+ *  (already merged) is a no-op. Frozen conflict rules:
+ *  - `room_state` (room, user_id) collision → keep the account row's position.
+ *  - `kicks` (room, user_id) collision → keep the EARLIER `kicked_at`
+ *    (the longer-standing sanction wins).
+ *  Unspecified PK collisions (`room_roles`, `mutes`) keep the account row. */
+export function mergeDeviceIntoAccount(
+  db: Db,
+  deviceUserId: string,
+  accountUserId: string,
+  now: number = Date.now(),
+): void {
+  if (deviceUserId === accountUserId) return;
+  const tx = db.transaction(() => {
+    const device = db
+      .prepare<[string], { id: string }>("SELECT id FROM users WHERE id = ?")
+      .get(deviceUserId);
+    if (!device) return; // already merged — idempotent no-op
+    const account = db
+      .prepare<[string], { id: string }>("SELECT id FROM users WHERE id = ?")
+      .get(accountUserId);
+    if (!account) {
+      throw new Error(`merge target account not found: ${accountUserId}`);
+    }
+    const dev = deviceUserId;
+    const acct = accountUserId;
+
+    // room_state: account's position wins on (room, user_id) collision.
+    db.prepare(
+      `DELETE FROM room_state WHERE user_id = ? AND room IN
+         (SELECT room FROM room_state WHERE user_id = ?)`,
+    ).run(dev, acct);
+    db.prepare("UPDATE room_state SET user_id = ? WHERE user_id = ?").run(acct, dev);
+
+    // room_roles: account's row wins on collision; granted_by follows the person.
+    db.prepare(
+      `DELETE FROM room_roles WHERE user_id = ? AND room IN
+         (SELECT room FROM room_roles WHERE user_id = ?)`,
+    ).run(dev, acct);
+    db.prepare("UPDATE room_roles SET user_id = ? WHERE user_id = ?").run(acct, dev);
+    db.prepare("UPDATE room_roles SET granted_by = ? WHERE granted_by = ?").run(acct, dev);
+
+    // reports: reporter, target, and handler history all follow the person.
+    for (const col of ["reporter_id", "target_id", "handled_by"] as const) {
+      db.prepare(`UPDATE reports SET ${col} = ? WHERE ${col} = ?`).run(acct, dev);
+    }
+
+    // mutes: account's row wins on collision; muted_by follows the person.
+    db.prepare(
+      `DELETE FROM mutes WHERE user_id = ? AND room IN
+         (SELECT room FROM mutes WHERE user_id = ?)`,
+    ).run(dev, acct);
+    db.prepare("UPDATE mutes SET user_id = ? WHERE user_id = ?").run(acct, dev);
+    db.prepare("UPDATE mutes SET muted_by = ? WHERE muted_by = ?").run(acct, dev);
+
+    // kicks: keep the EARLIER kicked_at (longer-standing sanction wins).
+    // Drop the device's row where the account's kick is earlier-or-equal…
+    db.prepare(
+      `DELETE FROM kicks WHERE user_id = ? AND EXISTS (
+         SELECT 1 FROM kicks a
+          WHERE a.user_id = ? AND a.room = kicks.room
+            AND a.kicked_at <= kicks.kicked_at
+       )`,
+    ).run(dev, acct);
+    // …drop the account's row where the device's kick is strictly earlier,
+    // then re-point whatever device rows survive.
+    db.prepare(
+      `DELETE FROM kicks WHERE user_id = ? AND EXISTS (
+         SELECT 1 FROM kicks d
+          WHERE d.user_id = ? AND d.room = kicks.room
+            AND d.kicked_at < kicks.kicked_at
+       )`,
+    ).run(acct, dev);
+    db.prepare("UPDATE kicks SET user_id = ? WHERE user_id = ?").run(acct, dev);
+    db.prepare("UPDATE kicks SET kicked_by = ? WHERE kicked_by = ?").run(acct, dev);
+
+    // focus_sessions: streak follows the account.
+    db.prepare("UPDATE focus_sessions SET user_id = ? WHERE user_id = ?").run(acct, dev);
+
+    // The anonymous row must have no references left; delete it.
+    db.prepare("DELETE FROM users WHERE id = ?").run(dev);
+    db.prepare("UPDATE users SET last_seen = ? WHERE id = ?").run(now, acct);
+  });
+  tx();
+}
+
+/** Site-level admin allowlist, normalized at parse time. */
+export interface AdminAllowlist {
+  /** Lowercased GitHub login names (ADMIN_GITHUB_USERS). */
+  githubUsers: string[];
+  /** Lowercased emails (ADMIN_EMAILS). */
+  emails: string[];
+}
+
+/** Parse a comma-separated env allowlist: trim, lowercase, drop empties. */
+export function parseAllowlist(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+}
+
+/** Allowlist-admin predicate (site-level, not room-scoped). Only
+ *  authenticated accounts can match — device rows carry NULL handle/email
+ *  and never match, and `provider='device'` is excluded explicitly. */
+export function isAllowlistAdmin(
+  db: Db,
+  userId: string,
+  allowlist: AdminAllowlist,
+): boolean {
+  const u = db
+    .prepare<[string], Pick<UserRow, "provider" | "provider_handle" | "email">>(
+      "SELECT provider, provider_handle, email FROM users WHERE id = ?",
+    )
+    .get(userId);
+  if (!u || u.provider === "device") return false;
+  const handle = (u.provider_handle ?? "").toLowerCase();
+  const email = (u.email ?? "").toLowerCase();
+  if (
+    u.provider === "github" &&
+    handle !== "" &&
+    allowlist.githubUsers.includes(handle)
+  ) {
+    return true;
+  }
+  return email !== "" && allowlist.emails.includes(email);
+}
+
+/** Effective role — the ONLY role value the server acts on (contract §2).
+ *  Resolution order per request: `room_roles` host row → allowlist admin →
+ *  user. A host who is also in the allowlist shows as `host`. */
+export function getEffectiveRole(
+  db: Db,
+  room: string,
+  userId: string,
+  allowlist: AdminAllowlist,
+): RoomRole {
+  if (getRoomRole(db, room, userId) === "host") return "host";
+  return isAllowlistAdmin(db, userId, allowlist) ? "admin" : "user";
+}
+
+// ---------- Login sessions / OAuth states / magic tokens ----------
+// All raw token values are 32 random bytes, base64url; the server stores
+// only their sha256 (contract §7 "No secret/PII echo").
+
+export const OAUTH_STATE_TTL_MS = 10 * 60_000; // frozen by contract §3
+export const MAGIC_TOKEN_TTL_MS = 15 * 60_000; // frozen by contract §4
+
+export interface LoginSessionRow {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  device_id: string | null;
+  created_at: number;
+  expires_at: number;
+  revoked_at: number | null;
+  last_seen: number;
+}
+
+/** Issues a login session and returns the id + the RAW token. The raw value
+ *  is handed to the client exactly once (the `#token=` fragment); only the
+ *  sha256 is stored. */
+export function createLoginSession(
+  db: Db,
+  userId: string,
+  ttlDays: number,
+  now: number = Date.now(),
+): { id: string; token: string } {
+  const token = randomBytes(32).toString("base64url");
+  const id = randomUUID();
+  db.prepare(
+    `INSERT INTO login_sessions
+       (id, user_id, token_hash, device_id, created_at, expires_at, revoked_at, last_seen)
+     VALUES (?, ?, ?, NULL, ?, ?, NULL, ?)`,
+  ).run(id, userId, sha256Hex(token), now, now + ttlDays * 86_400_000, now);
+  return { id, token };
+}
+
+/** Revokes a login session (`DELETE /v1/auth/session`). */
+export function revokeLoginSession(
+  db: Db,
+  sessionId: string,
+  now: number = Date.now(),
+): void {
+  db.prepare("UPDATE login_sessions SET revoked_at = ? WHERE id = ?").run(
+    now,
+    sessionId,
+  );
+}
+
+/** Looks up a login session by its raw bearer token (sha256). Returns the
+ *  session row, or undefined when unknown / revoked / expired. */
+export function getLoginSessionByToken(
+  db: Db,
+  token: string,
+  now: number = Date.now(),
+): LoginSessionRow | undefined {
+  const row = db
+    .prepare<[string, number], LoginSessionRow>(
+      `SELECT * FROM login_sessions
+        WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?`,
+    )
+    .get(sha256Hex(token), now);
+  if (row) {
+    db.prepare("UPDATE login_sessions SET last_seen = ? WHERE id = ?").run(
+      now,
+      row.id,
+    );
+  }
+  return row;
+}
+
+/** Creates an OAuth `state` (10-minute TTL, single-use) and returns the raw
+ *  value to embed in the authorize URL. Only the sha256 is stored. */
+export function createOAuthState(db: Db, now: number = Date.now()): string {
+  const state = randomBytes(32).toString("base64url");
+  db.prepare(
+    `INSERT INTO oauth_states (state_hash, created_at, expires_at, used)
+     VALUES (?, ?, ?, 0)`,
+  ).run(sha256Hex(state), now, now + OAUTH_STATE_TTL_MS);
+  return state;
+}
+
+/** Single-use consume of an OAuth `state`: marks it used iff it exists,
+ *  is unused, and is unexpired. Returns false on reuse/expiry/unknown —
+ *  the route maps that to `#error=invalid_state`. */
+export function consumeOAuthState(
+  db: Db,
+  state: string,
+  now: number = Date.now(),
+): boolean {
+  const res = db
+    .prepare(
+      `UPDATE oauth_states SET used = 1
+        WHERE state_hash = ? AND used = 0 AND expires_at > ?`,
+    )
+    .run(sha256Hex(state), now);
+  return res.changes === 1;
+}
+
+/** Creates an email magic token (15-minute TTL, single-use) bound to the
+ *  normalized email. Returns the raw token for the sign-in link. */
+export function createMagicToken(
+  db: Db,
+  email: string,
+  now: number = Date.now(),
+): string {
+  const token = randomBytes(32).toString("base64url");
+  db.prepare(
+    `INSERT INTO magic_tokens (token_hash, email, created_at, expires_at, used_at)
+     VALUES (?, ?, ?, ?, NULL)`,
+  ).run(sha256Hex(token), email, now, now + MAGIC_TOKEN_TTL_MS);
+  return token;
+}
+
+export type ConsumeMagicTokenResult =
+  | { ok: true; email: string }
+  | { ok: false; reason: "invalid" | "expired" };
+
+/** Single-use consume of a magic token. Unknown or already-used →
+ *  `invalid`; past TTL → `expired`. */
+export function consumeMagicToken(
+  db: Db,
+  token: string,
+  now: number = Date.now(),
+): ConsumeMagicTokenResult {
+  const row = db
+    .prepare<
+      [string],
+      { token_hash: string; email: string; expires_at: number; used_at: number | null }
+    >(
+      `SELECT token_hash, email, expires_at, used_at FROM magic_tokens
+        WHERE token_hash = ?`,
+    )
+    .get(sha256Hex(token));
+  if (!row || row.used_at !== null) return { ok: false, reason: "invalid" };
+  if (row.expires_at <= now) return { ok: false, reason: "expired" };
+  db.prepare("UPDATE magic_tokens SET used_at = ? WHERE token_hash = ?").run(
+    now,
+    row.token_hash,
+  );
+  return { ok: true, email: row.email };
+}
+
+/** Normalized email for magic-link identity: lowercase + trim. Two
+ *  differently-cased addresses are one account (contract §1). */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
 }

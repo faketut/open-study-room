@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { z } from "zod";
-import type { Db, RoomRole, ReportReason } from "../db.js";
+import type { Db, RoomRole, ReportReason, AdminAllowlist } from "../db.js";
 import {
   REPORT_REASONS,
   getRoomRole,
+  getEffectiveRole,
   userExists,
   createReport,
   listReports,
@@ -38,6 +39,9 @@ export interface ModerationRateLimits {
 export interface ModerationDeps {
   db: Db;
   apiSecret: string;
+  /** Site-level admin allowlist (P1-B contract §2); the only source of
+   *  `admin` — there is still no grant endpoint. */
+  allowlist: AdminAllowlist;
   /** Zone mute policy (carries the RoomMutator + M2 §3a composition). */
   zonePolicy: ZoneMutePolicy;
   /** LiveKit helpers. Null skips the remote calls (DB writes still apply);
@@ -59,8 +63,9 @@ type RoomParams = { Params: { room: string } };
 type RoomReportParams = { Params: { room: string; id: string } };
 
 /** Common auth chain for every moderation endpoint (contract §6):
- *  bearer → verifyJoinToken → room match → DB role. The role ALWAYS comes
- *  from `room_roles`; a client-supplied role is never trusted. */
+ *  bearer → verifyJoinToken → room match → effective role. The role ALWAYS
+ *  comes from the server (`room_roles` host row, then the P1-B env allowlist);
+ *  a client-supplied role is never trusted. */
 async function authenticate(
   req: FastifyRequest<RoomParams> | FastifyRequest<RoomReportParams>,
   reply: FastifyReply,
@@ -83,10 +88,17 @@ async function authenticate(
     await reply.code(403).send({ error: "room_mismatch" });
     return null;
   }
-  return { userId: payload.sub, role: getRoomRole(deps.db, room, payload.sub) };
+  // P1-B §2: the moderation gate acts on the EFFECTIVE role — the stored
+  // `room_roles` host row, then the site-level env allowlist admin.
+  return {
+    userId: payload.sub,
+    role: getEffectiveRole(deps.db, room, payload.sub, deps.allowlist),
+  };
 }
 
-/** Host/admin gate. `admin` is a placeholder in M2 (cannot be granted). */
+/** Host/admin gate. `admin` now comes from the P1-B env allowlist evaluated
+ *  server-side (contract §2); there is still no grant endpoint and a site
+ *  admin cannot transfer host unless they hold the host row. */
 async function requireHost(
   reply: FastifyReply,
   role: RoomRole,

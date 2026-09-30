@@ -6,6 +6,7 @@ import {
   type PeerEvents,
 } from "./liveKitService";
 import { createSession, type SessionResponse } from "./sessionApi";
+import { getAuthToken } from "./auth";
 import { delayMsForAttempt, shouldGiveUp } from "../domain/reconnectPolicy";
 
 /**
@@ -180,12 +181,10 @@ export function startConnectionController(
       color: deps.cache.color,
       characterIndex: deps.cache.characterIndex,
     });
-    // M2: re-publish the display-only role attribute on reconnect so the
-    // host badge survives a rejoin (contract §1).
-    void setRoleAttribute(
-      room,
-      deps.cache.session.role === "host" ? "host" : "user",
-    );
+    // M2/P1-B: re-publish the display-only role attribute on reconnect so
+    // the host/admin badge survives a rejoin (contract §1). The sessions
+    // response role is now "host" | "admin" | "user"; pass it through.
+    void setRoleAttribute(room, deps.cache.session.role ?? "user");
     return room;
   }
 
@@ -195,6 +194,10 @@ export function startConnectionController(
       nickname: deps.cache.nickname,
       color: deps.cache.color,
       room: deps.cache.room,
+      // P1-B: keep the device→account binding across session refreshes.
+      // undefined when anonymous — JSON.stringify drops it, so the
+      // anonymous flow is unchanged.
+      authToken: getAuthToken() ?? undefined,
     });
     deps.cache.session = fresh;
   }

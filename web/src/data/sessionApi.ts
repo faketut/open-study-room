@@ -6,6 +6,11 @@ export interface SessionRequest {
   nickname: string;
   color: string;
   room: string;
+  /** P1-B login token (from localStorage `syncle.auth_token`). Optional:
+   *  when present and valid the server merges the device row into the
+   *  account row (contract "Identity & login" §6). Absent = anonymous flow,
+   *  byte-for-byte unchanged. */
+  authToken?: string;
 }
 
 export interface SessionResponse {
@@ -16,10 +21,12 @@ export interface SessionResponse {
   color: string;
   expiresAt: number;
   /** M2 moderation role, assigned by the server (first joiner = host).
+   *  P1-B extends the enum with `admin` (site-level, from the server-side
+   *  env allowlist — the client never asserts it).
    *  Display-only on the client — the server's DB is the only source of
    *  truth for roles. Optional: older servers don't send it (default
-   *  "user"). Contract: docs/contracts.md "Moderation (M2)" §1. */
-  role?: "host" | "user";
+   *  "user"). Contracts: "Moderation (M2)" §1, "Identity & login" §2 §6. */
+  role?: "host" | "admin" | "user";
 }
 
 export class SessionApiError extends Error {

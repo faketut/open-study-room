@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 import Database from "better-sqlite3";
@@ -256,6 +256,14 @@ describe("POST /v1/rooms/:room/state zone fields", () => {
     await app.ready();
 
     token = await makeToken(userId, room);
+  });
+
+  afterEach(async () => {
+    // Same teardown rule as auth.test.ts: an open better-sqlite3 handle at
+    // worker teardown hard-crashes the process (RemoveEnvironmentCleanupHook
+    // assertion), so close the app and its database after every test.
+    await app.close();
+    db.close();
   });
 
   const postState = (payload: Record<string, unknown>) =>

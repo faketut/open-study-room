@@ -98,10 +98,12 @@ export interface LocalSelf {
    *  Broadcast as the `character` LiveKit attribute. */
   characterIndex?: number;
   /** M2 moderation role from the sessions response (`host` = first joiner).
+   *  P1-B adds `admin` (site-level, server-computed from the env allowlist).
    *  Published back as the display-only `role` LiveKit attribute; gates the
-   *  host-only moderation panel. Defaults to "user" when the server
-   *  doesn't send it. Contract: docs/contracts.md "Moderation (M2)" §1. */
-  role: "host" | "user";
+   *  host-only moderation panel (admins also see it — the server's DB is
+   *  the final arbiter). Defaults to "user" when the server doesn't send
+   *  it. Contracts: "Moderation (M2)" §1, "Identity & login" §2. */
+  role: "host" | "admin" | "user";
 }
 
 export interface JoinDraft {

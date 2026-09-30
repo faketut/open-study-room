@@ -1,7 +1,8 @@
-// M2 T8 — host moderation panel.
+// M2 T8 — host/admin moderation panel.
 //
-// Rendered only when the sessions response says `role === "host"`
-// (gated in SyncleScreen). Talks to the five contract §6 endpoints:
+// Rendered only when the sessions response says `role === "host"` or the
+// P1-B `"admin"` (gated in SyncleScreen). Talks to the five contract §6
+// endpoints:
 //
 //   GET  /v1/rooms/:room/reports          (open|all)
 //   POST /v1/rooms/:room/reports/:id/action

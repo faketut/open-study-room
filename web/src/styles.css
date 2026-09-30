@@ -239,6 +239,120 @@ select {
   padding: 2px;
 }
 
+/* P1-B login entry (contracts.md "Identity & login"). Same card language as
+ * the P1-A fieldsets; the email row wraps on narrow screens so it stays
+ * usable on phones. */
+.join-card .auth-fieldset {
+  border: 1px solid #2a323d;
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  font-size: 13px;
+  color: #9aa4b1;
+  display: grid;
+  gap: 8px;
+}
+
+.join-card .auth-fieldset > legend {
+  padding: 0 4px;
+}
+
+.join-card .auth-provider-btn {
+  width: 100%;
+}
+
+.join-card .email-login-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.join-card .email-login-row input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.join-card .email-login-row button {
+  flex: 0 0 auto;
+}
+
+.join-card .email-login-row .hint {
+  margin: 0;
+}
+
+/* P1-B account chip: shared by JoinScreen and the in-room HUD. Inline and
+ * compact so it fits the crowded hud-row on small screens. */
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid #2a323d;
+  border-radius: 999px;
+  background: #0e1116;
+  font-size: 12px;
+  color: #e6e8eb;
+  max-width: 100%;
+}
+
+.account-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+.account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.role-badge {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+.role-badge-admin {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.role-badge-host {
+  background: #ffcc00;
+  color: #1a1200;
+}
+
+.account-logout {
+  background: transparent;
+  border: 0;
+  color: #9aa4b1;
+  font-size: 12px;
+  padding: 2px 4px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.account-logout:hover {
+  color: #e6e8eb;
+}
+
+/* The join-screen variant of the chip sits as a block under the form. */
+.join-card .account-chip {
+  margin-top: 4px;
+}
+
+.join-card .account-logout {
+  border: 1px solid #2a323d;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
 .join-card .template-card {
   display: grid;
   gap: 6px;
@@ -365,6 +479,14 @@ select {
 .join-card .error {
   color: #ff6b6b;
   font-size: 13px;
+}
+
+/* P1-B auth callback notice: dismiss button sits at the right edge. */
+.join-card .error.auth-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .syncle-screen {

@@ -1,10 +1,12 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { loadConfig } from "./config.js";
-import { openDb, isMuted } from "./db.js";
+import { openDb, isMuted, parseAllowlist } from "./db.js";
+import type { AdminAllowlist } from "./db.js";
 import { TokenSigner, createRoomMutator, createRoomAdmin } from "./livekit.js";
 import { ZoneMutePolicy } from "./zones.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import { registerSnapshotRoutes, FRESH_WINDOW_MS } from "./routes/snapshot.js";
 import { registerStateRoutes } from "./routes/state.js";
 import { registerChannelRoutes } from "./routes/channels.js";
@@ -25,16 +27,26 @@ export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
   });
   await app.register(cors, { origin: true });
 
+  // P1-B §2: site-level admin allowlist, parsed once, evaluated server-side
+  // at auth time. Applies to authenticated accounts only.
+  const allowlist: AdminAllowlist = {
+    githubUsers: parseAllowlist(cfg.ADMIN_GITHUB_USERS),
+    emails: parseAllowlist(cfg.ADMIN_EMAILS),
+  };
+
   app.get("/healthz", async () => ({ ok: true, ts: Date.now() }));
   await registerSessionRoutes(app, {
     db,
     signer,
     livekitUrl: cfg.LIVEKIT_URL,
+    allowlist,
     rateLimit: {
       max: cfg.SESSION_RATE_LIMIT_MAX,
       timeWindowMs: cfg.SESSION_RATE_LIMIT_WINDOW_MS,
     },
   });
+  // P1-B lightweight login: OAuth + magic link + login sessions.
+  await registerAuthRoutes(app, { db, cfg, allowlist });
   registerSnapshotRoutes(app, db);
   // M1 server-side media isolation: entering a silent zone force-mutes the
   // participant's mic track via the LiveKit RoomServiceClient.
@@ -55,6 +67,7 @@ export async function buildApp(overrideEnv?: NodeJS.ProcessEnv) {
   await registerModerationRoutes(app, {
     db,
     apiSecret: cfg.LIVEKIT_API_SECRET,
+    allowlist,
     zonePolicy,
     muter: roomMutator,
     admin: createRoomAdmin(

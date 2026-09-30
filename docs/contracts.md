@@ -944,3 +944,342 @@ authoring nudges. The JoinScreen flow (§4.4) treats any error as fatal.
 | Web | `web/scripts/sync-assets.mjs` | `assets/templates/` → `web/public/templates/` (skip-if-missing) |
 | Repo | `assets/templates/<id>.json` | template files (authored by template workers, not P1-A) |
 | Repo | `assets/templates/registry.json` | picker registry (hand-maintained) |
+
+
+## Identity & login (P1-B: lightweight login)
+
+Lightweight login gives the room an identity layer without breaking the
+anonymous flow that M1–M4 are built on. It fills the hole the Moderation (M2)
+contract left open: M2 §1 §6 froze `admin` as a placeholder that "cannot be
+granted until the P1 identity system lands". **This is that system.** The
+roadmap's two stated goals are the design's two goals: (1) raise the cost of
+abuse (kicks/mutes/reports bind to an *account*, not a device), and (2) bind
+the focus streak to an account. Everything else is out of scope (§9).
+
+Guiding rule, extending M2's single security rule:
+
+> **Identity is asserted by the server, never by the client.** Admin comes
+> from the env allowlist evaluated server-side (§2); the OAuth state, the
+> magic token, and the login session are server-issued and single-use or
+> revocable (§7). No endpoint trusts a client-supplied identity.
+
+### 1. Identity model — one `users` row per account
+
+`users.id` stays the stable primary key and the FK target of
+`room_roles` / `reports` / `mutes` / `kicks` / `focus_sessions` / `room_state`.
+Login does **not** introduce a parallel identity table: a GitHub or email
+account is just a `users` row whose provider columns are filled in. OAuth
+login matches an existing row on `(provider, provider_sub)` → streak, roles,
+and moderation history follow the account automatically.
+
+New columns on `users`:
+
+| Column | Type | Rule |
+|---|---|---|
+| `provider` | TEXT NOT NULL DEFAULT `'device'` | `CHECK (provider IN ('device','github','email'))` |
+| `provider_sub` | TEXT | Provider-unique subject. GitHub → the numeric user id as text; email → the normalized (lowercased, trimmed) address. NULL for `provider='device'` rows. |
+| `provider_handle` | TEXT | Human-readable handle used for the admin allowlist: GitHub login name; email → same as `provider_sub`; NULL for device rows. |
+| `email` | TEXT | Best-known contact email (GitHub primary verified email, or the magic-link address). NULL for anonymous rows. |
+| `display_name` | TEXT | Provider profile name (GitHub `name`); NULL for anonymous rows. Room presence still uses `nickname` (the per-session chosen name), unchanged. |
+| `avatar_url` | TEXT | Provider avatar; NULL for anonymous rows. |
+
+```sql
+ALTER TABLE users ADD COLUMN provider TEXT NOT NULL DEFAULT 'device'
+  CHECK (provider IN ('device','github','email'));
+ALTER TABLE users ADD COLUMN provider_sub TEXT;
+ALTER TABLE users ADD COLUMN provider_handle TEXT;
+ALTER TABLE users ADD COLUMN email TEXT;
+ALTER TABLE users ADD COLUMN display_name TEXT;
+ALTER TABLE users ADD COLUMN avatar_url TEXT;
+-- Account lookup key. Partial index: NULL provider_sub rows (all anonymous
+-- rows) are excluded, so the anonymous device_id flow is untouched.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider_sub
+  ON users(provider, provider_sub) WHERE provider_sub IS NOT NULL;
+```
+
+Frozen rules:
+
+- **Anonymous flow is zero-change.** `upsertUser(deviceId, …)` keeps matching
+  on `device_id` (still `NOT NULL UNIQUE`). Anonymous rows always have
+  `provider='device'` and NULL provider columns. A device that never logs in
+  behaves exactly as in M1–M4.
+- **Account rows are not looked up by `device_id`.** Their `device_id`
+  column keeps a non-lookup placeholder value (`'acct:' || id`) solely to
+  satisfy the existing `NOT NULL UNIQUE` constraint; no flow may match on it.
+  (SQLite cannot cheaply drop the NOT NULL; the placeholder keeps the
+  migration additive.)
+- **Matching rule (normative):** OAuth/email callbacks upsert on
+  `(provider, provider_sub)`. The DB partial index makes double-registration
+  impossible; a second OAuth login with the same provider account returns the
+  *same* `users.id` — streak and roles follow automatically.
+- **Email normalization:** lowercase + trim, applied at request time and at
+  callback time; two differently-cased addresses are one account.
+- **No password column, no password flow** (see §9).
+
+### 2. Role model — host is per-room, admin is site-level
+
+Roles: `host` > `admin` > `user`, unchanged from M2.
+
+| Rule | Value |
+|---|---|
+| Who is host | Unchanged from M2 §1: the **first** user to join a room (first successful `POST /v1/sessions`). The host **may be anonymous**; anonymous host flow is untouched. |
+| Who is admin | **Site-level, from the env allowlist evaluated server-side at auth time.** `ADMIN_GITHUB_USERS`: comma-separated GitHub login names (case-insensitive), matched against `users.provider_handle` where `provider='github'`. `ADMIN_EMAILS`: comma-separated emails (lowercased), matched against `users.email`. Either match ⇒ the user is admin. There is **no grant endpoint**: hosts cannot grant admin (M2 §6 "an `admin` placeholder cannot transfer" is preserved — a site admin cannot transfer host unless they hold the host row). |
+| Effective role | Resolution order per request: `room_roles` row `host` → allowlist `admin` → `user`. A host who is also in the allowlist shows as `host`. |
+| Anonymous admins | An allowlist entry only takes effect on an **authenticated** session. The same person entering anonymously is a plain `user` (their device row has NULL email/handle). |
+
+`room_roles` keeps its frozen M2 semantics (only `host` rows are written by
+first-joiner assignment and transfer; the `admin` CHECK value stays in the
+schema but is not written — admin is computed, not stored).
+
+The moderation gate in `server/src/routes/moderation.ts` changes from
+`role !== "host" && role !== "admin"` (placeholder, never true) to the
+effective role above. `getRoomRole` keeps returning the stored row; a new
+`getEffectiveRole(db, room, userId)` adds the allowlist check and is the
+**only** role value the server acts on.
+
+### 3. GitHub OAuth — authorization code flow, server-side token exchange
+
+Scopes requested: `read:user user:email` (identity + primary verified email;
+nothing else).
+
+1. `GET /v1/auth/github` — server generates a 32-byte random `state`,
+   stores its **sha256** in `oauth_states` (10-minute TTL), and responds
+   `302` to `https://github.com/login/oauth/authorize` with
+   `client_id`, `redirect_uri={BASE_URL}/v1/auth/github/callback`,
+   `scope=read:user user:email`, `state`. If GitHub is not configured
+   (`GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` unset) → `503
+   { error: "github_not_configured" }`.
+2. `GET /v1/auth/github/callback?code=&state=` — server:
+   - validates `state`: exists, unused, unexpired; **consumes it
+     (single-use, mark used)**. Failure → 302 to
+     `${WEB_BASE_URL}/#error=invalid_state`.
+   - exchanges `code` for an access token **server-side**
+     (`POST https://github.com/login/oauth/access_token` with the client
+     secret; the secret never leaves the server).
+   - fetches `GET https://api.github.com/user` (id, login, name,
+     avatar_url) and `GET https://api.github.com/user/emails` (primary
+     verified email).
+   - upserts the account row on `(provider='github', provider_sub=<id>)`,
+     filling `provider_handle=login`, `email`, `display_name=name`,
+     `avatar_url`.
+   - issues a login session (§5) and 302s to
+     `${WEB_BASE_URL}/#token=<raw-token>`. The token travels **only in the
+     URL fragment**, which browsers never send to the web server. Errors
+     (exchange failure, no verified email) → `#error=<code>` with a
+     code only, no PII.
+3. The web client (on mount) reads the fragment once, stores the token in
+   `localStorage` (`syncle.auth_token`), strips the fragment from the URL,
+   then calls `POST /v1/sessions` with `authToken` (§6) to bind the device.
+
+```sql
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state_hash TEXT PRIMARY KEY,   -- sha256 hex of the raw state
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,   -- created_at + 10 min (frozen)
+  used INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
+```
+
+### 4. Email magic link — SMTP-backed, honestly gated
+
+- `POST /v1/auth/email/request` — body `{ "email": string }`. Server:
+  normalizes the email, validates shape (zod email), rate-limits strictly
+  (§7), creates a 32-byte random token, stores its **sha256** in
+  `magic_tokens` (15-minute TTL, single-use), and sends a sign-in link
+  `{BASE_URL}/v1/auth/email/callback?token=<raw>` via SMTP. **If SMTP is
+  not configured (`SMTP_HOST` or `SMTP_FROM` unset) → `501
+  { error: "email_not_configured" }`** and the web client hides the email
+  entry (driven by `GET /v1/auth/config`, below) — the contract is honest
+  instead of pretending email works. Success response is always a generic
+  `202 { "status": "sent" }`; it does not say whether an account existed
+  (any address can receive a link, so there is no oracle, but the response
+  shape is fixed anyway).
+- `GET /v1/auth/email/callback?token=` — server: looks up the sha256,
+  checks unused + unexpired, **marks used (single-use)**; failure →
+  `#error=invalid_token` or `#error=expired_token` redirect. Success →
+  upsert on `(provider='email', provider_sub=<normalized email>)`, issue a
+  login session (§5), 302 to `${WEB_BASE_URL}/#token=<raw-token>` exactly
+  like the GitHub flow.
+
+```sql
+CREATE TABLE IF NOT EXISTS magic_tokens (
+  token_hash TEXT PRIMARY KEY,   -- sha256 hex of the raw token
+  email TEXT NOT NULL,           -- normalized (lowercase, trimmed)
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,   -- created_at + 15 min (frozen)
+  used_at INTEGER                 -- NULL = unused; single-use
+);
+CREATE INDEX IF NOT EXISTS idx_magic_tokens_expires ON magic_tokens(expires_at);
+```
+
+### 5. Login session — distinct from the LiveKit JWT
+
+Two different tokens exist and the contract keeps them separate:
+
+| | LiveKit JWT (existing) | Login session (new) |
+|---|---|---|
+| Purpose | join one LiveKit room | prove account identity to the REST API |
+| Issuer | `POST /v1/sessions` (livekit signer) | auth callbacks (§3/§4) |
+| Lifetime | `TOKEN_TTL_SECONDS` (1 h) | `LOGIN_SESSION_TTL_DAYS` (default 30 d) |
+| Verifies | `verifyJoinToken` (HS256) | `login_sessions.token_hash` lookup (sha256) |
+
+- Raw token: 32 random bytes, base64url. The **raw value is given to the
+  client exactly once** (the `#token=` fragment); the server stores only
+  its sha256. Verifying a request = sha256 the presented bearer and look up
+  the row (must exist, `revoked_at IS NULL`, `expires_at > now`).
+- Client storage: `localStorage` (`syncle.auth_token`), sent as
+  `Authorization: Bearer <token>`. (Cookies across the `:8080`/`:8787`
+  dev ports fight SameSite; bearer is simpler. This is a deliberate
+  tradeoff, recorded here.)
+- `GET /v1/auth/me` (Bearer) → `200 { "userId", "provider",
+  "displayName", "avatarUrl", "email", "isAdmin" }`. Used by the web client
+  to render the logged-in badge.
+- `DELETE /v1/auth/session` (Bearer) → revokes the presented token
+  (`revoked_at = now`) → `204`. The client discards its stored token.
+- `GET /v1/auth/config` (public, light rate limit) →
+  `200 { "github": bool, "email": bool }`: which providers are actually
+  configured. The web client hides unavailable entries from JoinScreen.
+
+```sql
+CREATE TABLE IF NOT EXISTS login_sessions (
+  id TEXT PRIMARY KEY,            -- uuid
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE, -- sha256 hex of the raw token
+  device_id TEXT,                 -- device that last presented it (info only)
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,    -- created_at + LOGIN_SESSION_TTL_DAYS
+  revoked_at INTEGER,             -- NULL = live
+  last_seen INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_login_sessions_user ON login_sessions(user_id);
+```
+
+### 6. Binding: `POST /v1/sessions` accepts an optional login token
+
+`POST /v1/sessions` body gains one optional field: `authToken` (string).
+Anonymous flow (field absent) is **byte-for-byte unchanged**.
+
+When `authToken` is present and valid:
+
+1. The server resolves it to the **account** row.
+2. **Merge (frozen):** in one transaction, every FK row pointing at the
+   device's anonymous row (`room_state`, `room_roles`, `reports`,
+   `mutes`, `kicks`, `focus_sessions`) is re-pointed to the account row;
+   the anonymous row is then deleted. Idempotent: if the device is already
+   bound, nothing happens. Conflict handling is frozen:
+   - `room_state` (room, user_id) collision → keep the account row's
+     position, drop the device's.
+   - `kicks` (room, user_id) collision → keep the **earlier** `kicked_at`
+     (the longer-standing sanction wins).
+3. The response is issued for the **account** row: `userId` = account id,
+   the LiveKit JWT is signed with the account id, and `role` is the
+   effective role — the response's `role` enum extends to
+   `"host" | "admin" | "user"` (was `"host" | "user"`; the web client must
+   accept the new value). The client also publishes the `admin` value into
+   the LiveKit participant attribute for peer badges (display only, as in
+   M2 §1).
+
+Effects on the frozen FK consumers (deliberate, each recorded):
+
+- **streak (§8)** — `focus_sessions` re-pointed to the account row;
+  subsequent sessions land there too (the JWT now carries the account id).
+- **roles** — a device's `host` row follows the account; the host keeps
+  their room when they log in.
+- **moderation** — `reports` history follows the reporter/target; `mutes`
+  follow the muted account; `kicks` follow the kicked account, so **a
+  logged-in account stays kicked for the day even on a new device** —
+  this is the "raise the cost of abuse" half of the roadmap goal.
+- **Kick check in `sessions.ts` runs against the merged id**, i.e. after
+  step 2 — a kicked account cannot re-enter by re-binding.
+
+Known honest limitations (recorded, not hidden):
+
+- A kicked user can still evade by staying anonymous on a fresh device —
+  device rows are unlinkable by design. Login raises the cost of abuse;
+  it does not make evasion impossible.
+- The reverse merge edge: an anonymous device row that was kicked, then
+  logs in, transfers its kick to the account (intended: the account is the
+  same person). An *innocent shared device* behind one device_id is
+  indistinguishable from that person — shared-device operators accept
+  this by running login.
+
+### 7. Rate limits and security (normative)
+
+| Rule | Value |
+|---|---|
+| Auth endpoints rate limit | Per-IP, `AUTH_RATE_LIMIT_MAX` per `AUTH_RATE_LIMIT_WINDOW_MS` (defaults 10/min) on `/v1/auth/*`, separate from the sessions limiter. `POST /v1/auth/email/request` additionally counts per normalized email (10/hour) to bound mail-bombing one address. Exceeding → `429 { error: "rate_limited" }`. |
+| OAuth `state` | Random 32 bytes, **single-use** (marked used on first callback), 10-minute expiry. Reused/expired → `#error=invalid_state`. |
+| Magic token | **Single-use** (`used_at` set on first callback), 15-minute expiry. Never in query strings except the one inbound link the user clicked. |
+| No secret/PII echo | Raw tokens, token hashes, and full emails MUST NOT appear in server logs or error bodies. Error bodies carry **codes only** (`invalid_state`, `invalid_token`, `expired_token`, `github_not_configured`, `email_not_configured`). Log at most a truncated hash prefix (≤ 8 hex chars) for correlation. |
+| Secrets | `GITHUB_CLIENT_SECRET` and SMTP credentials travel only in env vars (§8); they are never logged, never returned, and the GitHub token exchange is server-to-server. |
+| Client secret storage | The web client stores only the login-session bearer; it never sees the GitHub OAuth access token. |
+
+### 8. Environment variables (zod schema additions in `server/src/config.ts`)
+
+| Variable | Required? | Default | Notes |
+|---|---|---|---|
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | no | — | Both set ⇒ GitHub login on; either missing ⇒ off (`503 github_not_configured`, hidden in `auth/config`). |
+| `BASE_URL` | yes when any login on | — | Public server origin, e.g. `https://study.example.com`. Used to build `redirect_uri` and magic-link URLs. |
+| `WEB_BASE_URL` | no | `http://localhost:8080` | Where auth callbacks 302 the browser (token in `#token=` fragment). |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | no | — | `SMTP_HOST` + `SMTP_FROM` set ⇒ email login on; otherwise `501 email_not_configured` (web hides the entry). `SMTP_PORT` default 587. |
+| `ADMIN_GITHUB_USERS` | no | — | Comma-separated GitHub logins, case-insensitive. |
+| `ADMIN_EMAILS` | no | — | Comma-separated emails, lowercased before compare. |
+| `LOGIN_SESSION_TTL_DAYS` | no | `30` | Login-session lifetime. |
+| `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_MS` | no | `10` / `60000` | Per-IP limit for `/v1/auth/*` (cf. `SESSION_RATE_LIMIT_*` for sessions). |
+
+### 9. Explicitly out of scope
+
+- **Enterprise SSO** (SAML / generic OIDC provider config): the roadmap
+  says no; the `provider` CHECK enum admits only `device | github |
+  email`. Adding a provider is a contract change.
+- **Password login**: no password column, no password endpoints.
+- **Unlink / delete account**: no endpoint detaches an OAuth identity
+  from a row or deletes an account row in P1. (FK cascades would orphan
+  moderation history; this needs its own contract.)
+- **Multi-account switching UI beyond logout**: login is one active
+  session token per browser; `DELETE /v1/auth/session` is the switch.
+
+### Where it lives (P1-B implementation targets)
+
+| Side | File | Symbol |
+|---|---|---|
+| Server | `server/src/db.ts` | identity columns + `idx_users_provider_sub` + `login_sessions` / `oauth_states` / `magic_tokens` schemas + `upsertAccount`, `mergeDeviceIntoAccount`, `getEffectiveRole`, `UserRow` identity fields |
+| Server | `server/src/routes/auth.ts` | `/v1/auth/github`, `/v1/auth/github/callback`, `/v1/auth/email/request`, `/v1/auth/email/callback`, `/v1/auth/me`, `/v1/auth/session`, `/v1/auth/config` |
+| Server | `server/src/routes/sessions.ts` | optional `authToken` body field → merge; `role` response `"host"\|"admin"\|"user"` |
+| Server | `server/src/routes/moderation.ts` | host/admin gate switches to `getEffectiveRole` |
+| Server | `server/src/config.ts` | §8 env vars (zod) |
+| Server | `server/src/auth.ts` | `verifyLoginSession` (bearer → user row via sha256 lookup) |
+| Web | `web/src/data/sessionApi.ts` | `authToken` param on `createSession`; `getAuthConfig`, `requestEmailLink`, `getMe`, `logout` |
+| Web | `web/src/ui/JoinScreen.tsx` | login buttons driven by `/v1/auth/config`; `localStorage` token store; `#token=`/`#error=` fragment handling; all new strings via `pickUiLang`/`localizeText` (no i18n framework, as existing) |
+
+### Test coverage (P1-B targets)
+
+- Account upsert is idempotent on `(provider, provider_sub)`; a second
+  OAuth login returns the same `users.id`.
+- Merge: device row's `focus_sessions`/`room_roles`/`kicks` re-point to the
+  account row; device row deleted; re-running merge is a no-op; kick
+  collision keeps the earlier `kicked_at`.
+- `getEffectiveRole`: host row beats allowlist; allowlist beat plain user;
+  anonymous caller with allowlisted email is `user` until logged in.
+- OAuth state: reuse → `invalid_state`; expired → `invalid_state`.
+- Magic token: reuse → `invalid_token`; expired → `expired_token`; SMTP
+  unconfigured → `501 email_not_configured`.
+- `verifyLoginSession`: revoked/expired/unknown token → reject; the raw
+  token value never appears in any DB row or log fixture.
+- `GET /v1/auth/config` reflects exactly which env sets are present.
+- Anonymous `POST /v1/sessions` (no `authToken`) behaves as before
+  (regression on the M1–M4 suite).
+
+### Self-consistency checklist (for the P1-B implementer)
+
+Tables: `users` (identity columns), `login_sessions`, `oauth_states`,
+`magic_tokens` — each referenced exactly where used above, no other new
+tables. Endpoints: eight, all under `/v1/auth/` except the `authToken`
+extension to `/v1/sessions`. Merges: one transaction, one direction
+(device → account), idempotent. Secrets: two (GitHub client secret,
+SMTP creds), both env-only. Fragments: `#token=` / `#error=` are the only
+places a raw token crosses the wire to the browser. Anonymous flow:
+unchanged by construction (partial index + optional field + unchanged
+`upsertUser`).

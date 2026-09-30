@@ -20,11 +20,13 @@
     "better-sqlite3": "^11.3.0",
     "fastify": "^4.28.1",
     "livekit-server-sdk": "^2.7.2",
+    "nodemailer": "^10.0.12",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.16.5",
+    "@types/nodemailer": "^8.0.2",
     "jose": "^5.9.2",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",

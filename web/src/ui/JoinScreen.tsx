@@ -9,6 +9,19 @@ import {
   persistCharacterIndex,
 } from "../state/syncleStore";
 import { createSession, getOrCreateDeviceId, listChannels } from "../data/sessionApi";
+import { useAuth } from "../state/authStore";
+// P1-B lightweight login (contracts.md "Identity & login"): fragment
+// handling, /v1/auth/* clients, bilingual strings via the existing
+// pickUiLang/localizeText pattern (no i18n framework).
+import {
+  AUTH_STRINGS,
+  authErrorText,
+  getAuthToken,
+  githubLoginUrl,
+  requestEmailLink,
+  visibleLoginEntries,
+  type AuthApiError,
+} from "../data/auth";
 import { loadMapConfig } from "../domain/mapConfig";
 // P1-A template picker (contracts.md "Map templates" §4): registry-driven
 // cards replace the Map dropdown when templates are published; every
@@ -106,6 +119,66 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
 
   const useTemplatePicker = templates != null && templates.length > 0;
 
+  // P1-B lightweight login (contracts.md "Identity & login"). bootstrap()
+  // consumes `#token=`/`#error=` once at startup (stripping the fragment
+  // via history.replaceState), restores the stored session, and loads
+  // GET /v1/auth/config. Anonymous users are unaffected: the entries stay
+  // hidden until config arrives and the flow below is a no-op.
+  const bootstrapAuth = useAuth((s) => s.bootstrap);
+  const authReady = useAuth((s) => s.ready);
+  const authConfig = useAuth((s) => s.config);
+  const account = useAuth((s) => s.account);
+  const logoutAuth = useAuth((s) => s.logout);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+  const loginEntries = useMemo(
+    () => visibleLoginEntries(authConfig),
+    [authConfig],
+  );
+
+  useEffect(() => {
+    void bootstrapAuth(BACKEND_URL).then(({ errorCode, account: acc }) => {
+      if (errorCode != null) {
+        setAuthNotice(authErrorText(errorCode, uiLang));
+      }
+      // Suggest the account's display_name as the join nickname when the
+      // draft still holds the auto-generated `Syncle-XXXX` placeholder.
+      // Presence nickname stays per-session (contract §1); this only
+      // changes the default text in the field, never a chosen nickname.
+      if (acc?.displayName) {
+        const draft = useSyncle.getState().joinDraft;
+        if (/^Syncle-[A-Z0-9]{4}$/.test(draft.nickname.trim())) {
+          setJoinDraft({ nickname: acc.displayName });
+        }
+      }
+    });
+  }, [bootstrapAuth, uiLang, setJoinDraft]);
+
+  async function handleEmailRequest() {
+    const addr = email.trim();
+    if (addr.length === 0 || emailBusy) return;
+    setEmailBusy(true);
+    setAuthNotice(null);
+    try {
+      // 202 = generic "sent" (contract §4); failures carry a code only.
+      await requestEmailLink(BACKEND_URL, addr);
+      setEmailSent(true);
+    } catch (e) {
+      const code = (e as Partial<AuthApiError>)?.code;
+      setAuthNotice(authErrorText(code, uiLang));
+    } finally {
+      setEmailBusy(false);
+    }
+  }
+
+  async function handleLogout() {
+    setEmail("");
+    setEmailSent(false);
+    await logoutAuth(BACKEND_URL);
+  }
+
   const nicknameOk = isValidNickname(joinDraft.nickname);
   const roomOk = isValidRoom(joinDraft.room);
   const canSubmit = nicknameOk && roomOk && conn !== "connecting";
@@ -168,10 +241,16 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         nickname: joinDraft.nickname.trim(),
         color: joinDraft.color,
         room: joinDraft.room,
+        // P1-B: bind this device's anonymous row to the logged-in account
+        // (contract §6 merge). undefined when anonymous — JSON.stringify
+        // drops it, so the anonymous flow is unchanged.
+        authToken: getAuthToken() ?? undefined,
       });
-      // M2: the sessions response carries our moderation role (first
-      // joiner = host). Display-only locally; the server DB decides.
-      const myRole = session.role === "host" ? "host" : "user";
+      // M2/P1-B: the sessions response carries our moderation role (first
+      // joiner = host; P1-B adds server-computed `admin`). Display-only
+      // locally; the server DB decides.
+      const myRole =
+        session.role === "host" ? "host" : session.role === "admin" ? "admin" : "user";
 
       setSelf({
         userId: session.userId,
@@ -337,8 +416,10 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         color: session.color,
         characterIndex: joinDraft.characterIndex,
       });
-      // M2: publish our moderation role as the display-only `role`
-      // attribute (contract §1). Peers show the host badge from this.
+      // M2/P1-B: publish our moderation role as the display-only `role`
+      // attribute (contract "Identity & login" §6: the `admin` value is
+      // published too, for peer badges). Peers show the host/admin badge
+      // from this.
       void setRoleAttribute(room, myRole);
 
       const cache: ConnectCache = {
@@ -402,6 +483,23 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
               type="button"
               className="icon-btn"
               onClick={() => setKicked(null)}
+              aria-label="Dismiss"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* P1-B: OAuth/email callback feedback (`#error=` fragment, code
+            only — contract §7). Human text in the user's language. */}
+        {authNotice && (
+          <div className="error auth-error" role="alert" aria-live="assertive">
+            <span>{authNotice}</span>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setAuthNotice(null)}
               aria-label="Dismiss"
               title="Dismiss"
             >
@@ -538,6 +636,89 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         >
           {conn === "connecting" ? "Joining…" : "Join room"}
         </button>
+
+        {/* P1-B login entry (contracts.md "Identity & login"). Rendered only
+            when GET /v1/auth/config has arrived and reports a provider
+            available — email shows only when `email: true` (contract §4).
+            Logged in → the account chip with an admin badge + logout. */}
+        {authReady && account == null && (loginEntries.github || loginEntries.email) && (
+          <fieldset className="auth-fieldset">
+            <legend>{localizeText(AUTH_STRINGS.signIn, uiLang)}</legend>
+            {loginEntries.github && (
+              <button
+                type="button"
+                className="secondary auth-provider-btn"
+                onClick={() => {
+                  // Contract §3: GitHub login = full-page 302 via the
+                  // server — simplest and most reliable.
+                  window.location.href = githubLoginUrl(BACKEND_URL);
+                }}
+              >
+                {localizeText(AUTH_STRINGS.signInWithGithub, uiLang)}
+              </button>
+            )}
+            {loginEntries.email && (
+              emailSent ? (
+                <p className="hint">
+                  {localizeText(AUTH_STRINGS.checkEmail, uiLang)}
+                </p>
+              ) : (
+                <div className="email-login-row">
+                  <input
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={email}
+                    placeholder={localizeText(AUTH_STRINGS.emailPlaceholder, uiLang)}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleEmailRequest();
+                    }}
+                    aria-label={localizeText(AUTH_STRINGS.signInWithEmail, uiLang)}
+                  />
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={emailBusy || email.trim().length === 0}
+                    onClick={() => void handleEmailRequest()}
+                  >
+                    {localizeText(AUTH_STRINGS.sendSignInLink, uiLang)}
+                  </button>
+                </div>
+              )
+            )}
+          </fieldset>
+        )}
+
+        {authReady && account != null && (
+          <div className="account-chip" role="status">
+            {account.avatarUrl && (
+              <img
+                src={account.avatarUrl}
+                alt=""
+                className="account-avatar"
+                loading="lazy"
+                // Never show a broken avatar (same rule as template thumbs).
+                onError={(e) => e.currentTarget.remove()}
+              />
+            )}
+            <span className="account-name">
+              {account.displayName ?? account.email ?? account.userId}
+            </span>
+            {account.isAdmin && (
+              <span className="role-badge role-badge-admin">
+                {localizeText(AUTH_STRINGS.admin, uiLang)}
+              </span>
+            )}
+            <button
+              type="button"
+              className="secondary account-logout"
+              onClick={() => void handleLogout()}
+            >
+              {localizeText(AUTH_STRINGS.signOut, uiLang)}
+            </button>
+          </div>
+        )}
 
         <button
           type="button"

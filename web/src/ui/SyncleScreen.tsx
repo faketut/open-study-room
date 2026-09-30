@@ -79,6 +79,11 @@ import { ModerationPanel } from "./ModerationPanel";
 import { FocusStatsPanel } from "./FocusStatsPanel";
 import { SitFocusPrompt } from "./SitFocusPrompt";
 import { usePomodoroStore } from "../state/pomodoroStore";
+import { useAuth } from "../state/authStore";
+// P1-B account chip strings (contracts.md "Identity & login"). Bilingual
+// via the existing pickUiLang/localizeText pattern (no i18n framework).
+import { AUTH_STRINGS } from "../data/auth";
+import { localizeText, pickUiLang } from "../domain/templateRegistry";
 import { MeetingView } from "./MeetingView";
 import { MiniPanel } from "./MiniPanel";
 import { BoardModal } from "./BoardModal";
@@ -134,6 +139,17 @@ export interface SyncleScreenProps {
 export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleScreenProps) {
   const map = useSyncle((s) => s.map);
   const self = useSyncle((s) => s.self);
+  // P1-B login (contracts.md "Identity & login"): `account` is null for
+  // anonymous users — the account chip and everything auth stays hidden.
+  const account = useAuth((s) => s.account);
+  const logoutAuth = useAuth((s) => s.logout);
+  const uiLang = pickUiLang(
+    typeof navigator !== "undefined" ? navigator.language : undefined,
+  );
+  // Moderation powers: M2 host, plus P1-B site-level admin (server-computed
+  // from the env allowlist — the client never asserts it; the server DB is
+  // the final arbiter for every moderation call).
+  const isModerator = self?.role === "host" || self?.role === "admin";
   const peerCount = useSyncle((s) => s.peers.size);
   const setSelfPosition = useSyncle((s) => s.setSelfPosition);
   const setSelfTable = useSyncle((s) => s.setSelfTable);
@@ -1281,6 +1297,46 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             manualBusy={self.manualBusy}
             onToggleBusy={() => setManualBusy(!self.manualBusy)}
           />
+          {/* P1-B account chip (contracts.md "Identity & login"): account
+              display name + role badge + logout. Anonymous users never see
+              it — their flow is untouched. */}
+          {account && (
+            <span className="account-chip" title={account.email ?? undefined}>
+              {account.avatarUrl && (
+                <img
+                  src={account.avatarUrl}
+                  alt=""
+                  className="account-avatar"
+                  loading="lazy"
+                  onError={(e) => e.currentTarget.remove()}
+                />
+              )}
+              <span className="account-name">
+                {account.displayName ?? account.email ?? "…"}
+              </span>
+              {self?.role === "admin" && (
+                <span className="role-badge role-badge-admin">
+                  {localizeText(AUTH_STRINGS.admin, uiLang)}
+                </span>
+              )}
+              {self?.role === "host" && (
+                <span className="role-badge role-badge-host">
+                  {localizeText(AUTH_STRINGS.host, uiLang)}
+                </span>
+              )}
+              <button
+                type="button"
+                className="account-logout"
+                onClick={() => {
+                  if (cache?.backendUrl) void logoutAuth(cache.backendUrl);
+                }}
+                title={localizeText(AUTH_STRINGS.signOut, uiLang)}
+                aria-label={localizeText(AUTH_STRINGS.signOut, uiLang)}
+              >
+                {localizeText(AUTH_STRINGS.signOut, uiLang)}
+              </button>
+            </span>
+          )}
           <button
             type="button"
             className="view-toggle"
@@ -1321,12 +1377,12 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           >
             <Settings size={14} aria-hidden="true" />
           </button>
-          {self?.role === "host" && (
+          {isModerator && (
             <button
               type="button"
               className="view-toggle"
               onClick={() => setModerationOpen(true)}
-              title="Moderation panel (host)"
+              title="Moderation panel (host / admin)"
               aria-label="Moderation panel"
             >
               <Shield size={14} aria-hidden="true" />
@@ -1676,8 +1732,9 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           }}
         />
       )}
-      {/* M2 moderation panel — host only (contract §6). */}
-      {moderationOpen && self?.role === "host" && (
+      {/* M2 moderation panel — host or P1-B admin (contract §2: the server
+          applies the effective role; this gate only controls visibility). */}
+      {moderationOpen && isModerator && (
         <ModerationPanel
           room={room}
           backendUrl={cache?.backendUrl ?? ""}

@@ -59,6 +59,7 @@ async function buildFixture(): Promise<Fixture> {
     db,
     signer,
     livekitUrl: "ws://test",
+    allowlist: { githubUsers: [], emails: [] },
     rateLimit: { max: 10_000, timeWindowMs: 60_000 },
   });
   await registerFocusRoutes(app, {
