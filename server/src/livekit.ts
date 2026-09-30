@@ -1,4 +1,4 @@
-import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, TrackSource, DataPacket_Kind } from "livekit-server-sdk";
 import type { ParticipantInfo } from "livekit-server-sdk";
 
 export interface SignedToken {
@@ -123,4 +123,48 @@ export function createRoomMutator(
   apiSecret: string,
 ): RoomMutator {
   return new RoomMutator(new RoomServiceClient(host, apiKey, apiSecret));
+}
+
+// ---------- M2 moderation enforcement (kick) ----------
+// docs/contracts.md "Moderation (M2: stranger safety)" §3b: the server sends
+// a reliable data-channel kick notice to the target's identity, then calls
+// removeParticipant, then records the kick row.
+
+/** Minimal surface we need for kick enforcement. Kept an interface (instead
+ *  of the concrete RoomServiceClient) so tests can inject a spy. */
+export interface RoomAdminClient {
+  /** Reliable data-channel payload to one participant identity. */
+  sendData(room: string, identity: string, payload: string): Promise<unknown>;
+  /** Remove a participant from the room. */
+  removeParticipant(room: string, identity: string): Promise<unknown>;
+}
+
+export class LiveKitRoomAdmin implements RoomAdminClient {
+  constructor(private readonly client: RoomServiceClient) {}
+
+  async sendData(
+    room: string,
+    identity: string,
+    payload: string,
+  ): Promise<unknown> {
+    return this.client.sendData(
+      room,
+      new TextEncoder().encode(payload),
+      DataPacket_Kind.RELIABLE,
+      { destinationIdentities: [identity] },
+    );
+  }
+
+  async removeParticipant(room: string, identity: string): Promise<unknown> {
+    return this.client.removeParticipant(room, identity);
+  }
+}
+
+/** Build a RoomAdminClient backed by a real LiveKit RoomServiceClient. */
+export function createRoomAdmin(
+  host: string,
+  apiKey: string,
+  apiSecret: string,
+): RoomAdminClient {
+  return new LiveKitRoomAdmin(new RoomServiceClient(host, apiKey, apiSecret));
 }

@@ -16,6 +16,15 @@ import {
 import { publishReliable } from "../data/liveKitService";
 import { findZoneAt, zonesOf } from "../domain/zones";
 import { createChannel } from "../data/sessionApi";
+import {
+  ChatSendThrottler,
+  CHAT_QUEUE_MAX,
+  CHAT_SEND_MIN_INTERVAL_MS,
+} from "../domain/chatThrottle";
+import {
+  maskProfanity,
+  SENSITIVE_WORDS,
+} from "../domain/profanityFilter";
 
 /** Top-level chat tab. */
 export type ChatTab = "global" | "zone" | "channels" | "dms";
@@ -65,6 +74,19 @@ export function ChatPanel({
   const [dmTarget, setDmTarget] = useState<string | null>(null);
   const [channelDraft, setChannelDraft] = useState("");
   const [channelError, setChannelError] = useState<string | null>(null);
+  // M2 §4: client-side send throttle (1 msg / 2s, FIFO depth 3, overflow
+  // dropped). Best-effort — the server never sees chat bytes, so the
+  // moderation loop is the backstop for hostile clients.
+  const throttlerRef = useRef<ChatSendThrottler | null>(null);
+  if (!throttlerRef.current) {
+    throttlerRef.current = new ChatSendThrottler();
+  }
+  const [throttleNotice, setThrottleNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!throttleNotice) return;
+    const id = window.setTimeout(() => setThrottleNotice(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [throttleNotice]);
 
   const myZone = self && map ? findZoneAt(self.x, self.y, map) : null;
   const zoneAvailable = !!myZone;
@@ -146,8 +168,12 @@ export function ChatPanel({
     (tab === "dms" && !dmTarget);
 
   async function handleSend() {
-    const text = sanitizeChatText(draft);
-    if (!text || !self) return;
+    const raw = sanitizeChatText(draft);
+    if (!raw || !self) return;
+    // M2 §4: mask sensitive words pre-send with the same rule the server
+    // enforces on nicknames. The word list is a build-time copy of
+    // `server/src/moderation/words.ts`.
+    const text = maskProfanity(raw, SENSITIVE_WORDS);
 
     const ts = Date.now();
     let scope: ChatScope;
@@ -170,26 +196,37 @@ export function ChatPanel({
       to = dmTarget;
     }
 
-    try {
-      await publishReliable(
+    // The whole send (network publish + optimistic echo) is one throttled
+    // unit so ordering stays trivially correct.
+    const doSend = () => {
+      void publishReliable(
         room,
         encodeChat({ scope, zoneKey, channelId: cId, to, text, ts }),
+      ).catch((err) => console.warn("chat publish failed", err));
+      appendChatMessage({
+        fromIdentity: LOCAL_CHAT_IDENTITY,
+        fromName: self.nickname,
+        fromColor: self.color,
+        scope,
+        zoneKey,
+        channelId: cId,
+        to,
+        text,
+        ts,
+        mentionsMe: false,
+      });
+    };
+    const throttler = throttlerRef.current;
+    const result = throttler ? throttler.attempt(doSend) : "sent";
+    if (result === "sent") {
+      setThrottleNotice(null);
+    } else if (result === "queued") {
+      setThrottleNotice(
+        `发送太快了，已排队（${throttler?.pendingCount ?? 0}/${CHAT_QUEUE_MAX}，每 ${CHAT_SEND_MIN_INTERVAL_MS / 1000} 秒发一条）`,
       );
-    } catch (err) {
-      console.warn("chat publish failed", err);
+    } else {
+      setThrottleNotice("发送太快了，消息已丢弃，请稍后再试。");
     }
-    appendChatMessage({
-      fromIdentity: LOCAL_CHAT_IDENTITY,
-      fromName: self.nickname,
-      fromColor: self.color,
-      scope,
-      zoneKey,
-      channelId: cId,
-      to,
-      text,
-      ts,
-      mentionsMe: false,
-    });
     setDraft("");
   }
 
@@ -322,6 +359,11 @@ export function ChatPanel({
           Send
         </button>
       </div>
+      {throttleNotice && (
+        <div className="chat-throttle-notice" role="status">
+          {throttleNotice}
+        </div>
+      )}
     </div>
   );
 }

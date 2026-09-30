@@ -50,6 +50,16 @@ export default function App() {
           setReconnect({ attempt: state.attempt, reason: state.reason });
         } else {
           // gaveUp: surface the failure and bounce back to the join screen.
+          // M2 §3b: a kick's data-channel notice may land after the
+          // `removeParticipant` disconnect — in that case the disconnect
+          // reason is PARTICIPANT_REMOVED and we fall back to a generic
+          // "removed from room" notice (empty reason) for the join screen.
+          if (
+            state.reason === "PARTICIPANT_REMOVED" &&
+            !useSyncle.getState().kicked
+          ) {
+            useSyncle.getState().setKicked({ reason: "" });
+          }
           setReconnect(null);
           handleLeave();
         }

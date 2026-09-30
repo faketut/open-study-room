@@ -12,6 +12,7 @@ import { loadMapConfig } from "../domain/mapConfig";
 import {
   connectLiveKit,
   publishProfileAttributes,
+  setRoleAttribute,
   type PeerEvents,
 } from "../data/liveKitService";
 import type { ConnectCache } from "../data/connectionController";
@@ -28,6 +29,12 @@ import {
 } from "../domain/reactionPacket";
 import { isAvatarStatus } from "../domain/avatarStatus";
 import { findZoneAt } from "../domain/zones";
+import { isBlockedIdentity } from "../domain/blockList";
+import { decodeKickNotice, moderationErrorCode, moderationErrorMessage } from "../domain/moderation";
+import {
+  containsProfanity,
+  SENSITIVE_WORDS,
+} from "../domain/profanityFilter";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8787";
 
@@ -40,7 +47,9 @@ export interface JoinScreenProps {
 }
 
 export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
-  const { joinDraft, setJoinDraft, conn, error, setConn, setMap, setSelf, upsertPeer, updatePeerPosition, removePeer, setPeerTable, setPeerProfile, setPeerStatus, setPeerNowPlaying, pushReaction, appendChatMessage, clearPeers, setChannels, setJoinedChannelIds } = useSyncle();
+  const { joinDraft, setJoinDraft, conn, error, setConn, setMap, setSelf, upsertPeer, updatePeerPosition, removePeer, setPeerTable, setPeerProfile, setPeerStatus, setPeerRole, setPeerNowPlaying, pushReaction, appendChatMessage, clearPeers, setChannels, setJoinedChannelIds } = useSyncle();
+  const kicked = useSyncle((s) => s.kicked);
+  const setKicked = useSyncle((s) => s.setKicked);
   const [localError, setLocalError] = useState<string | null>(null);
   // Computed at mount time; the user only comes back here after editing, so
   // a freshly-mounted JoinScreen picks up "Custom (your edits)" if saved.
@@ -49,9 +58,16 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
   const nicknameOk = isValidNickname(joinDraft.nickname);
   const roomOk = isValidRoom(joinDraft.room);
   const canSubmit = nicknameOk && roomOk && conn !== "connecting";
+  // M2: local pre-validation of the nickname with the same rule the server
+  // enforces. Instant hint only — the server is the final arbiter.
+  const nicknameHasSensitiveWord = containsProfanity(
+    joinDraft.nickname,
+    SENSITIVE_WORDS,
+  );
 
   async function handleJoin() {
     setLocalError(null);
+    setKicked(null);
     setConn("connecting");
     try {
       const choice =
@@ -66,6 +82,9 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         color: joinDraft.color,
         room: joinDraft.room,
       });
+      // M2: the sessions response carries our moderation role (first
+      // joiner = host). Display-only locally; the server DB decides.
+      const myRole = session.role === "host" ? "host" : "user";
 
       setSelf({
         userId: session.userId,
@@ -77,12 +96,14 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         status: "available",
         manualBusy: false,
         characterIndex: joinDraft.characterIndex,
+        role: myRole,
       });
 
       resetSeq();
       // Build the handler bundle once; the reconnect controller re-uses
       // this same object on every retry so we don't lose data callbacks.
       const spawn = choice.spawn;
+      const roomName = joinDraft.room;
       const events: PeerEvents = {
         onPeerJoined: (identity, name) =>
           upsertPeer({
@@ -97,10 +118,24 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
           }),
         onPeerLeft: (identity) => removePeer(identity),
         onData: (identity, payload) => {
+          // M2: kick notice (contract §3b). Reliable JSON `{"type":
+          // "kick_notice","reason":"..."}` — starts with `{`, never one of
+          // the binary type tags. Recorded in the store; SyncleScreen
+          // disconnects and App routes back to the join screen.
+          if (payload.length > 0 && payload[0] === 0x7b) {
+            const reason = decodeKickNotice(payload);
+            if (reason != null) {
+              setKicked({ reason });
+              return;
+            }
+          }
           // Dispatch by type tag (byte 0). Position=1, chat=2, reaction=3.
           if (payload.length > 0 && payload[0] === PACKET_TYPE_CHAT) {
             const chat = decodeChat(payload);
             if (!chat) return;
+            // M2 T5 local block: drop chat from blocked senders (all
+            // scopes, including dm) before it reaches the chat store.
+            if (isBlockedIdentity(roomName, identity)) return;
             // Receiver-side scope enforcement. Each branch decides whether
             // *this* client should display the message.
             const state = useSyncle.getState();
@@ -147,6 +182,9 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
           if (payload.length > 0 && payload[0] === PACKET_TYPE_REACTION) {
             const r = decodeReaction(payload);
             if (!r) return;
+            // M2 T5 local block: reactions ride the chat packet — dropped at
+            // the same filter point as chat.
+            if (isBlockedIdentity(roomName, identity)) return;
             pushReaction(identity, REACTIONS[r.index].glyph);
             return;
           }
@@ -186,6 +224,12 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
           if (typeof attrs.now_playing === "string") {
             setPeerNowPlaying(identity, attrs.now_playing);
           }
+          // M2 moderation role (display-only; contract §1). Empty means
+          // "not published" — keep the existing value.
+          const roleAttr = attrs.role;
+          if (roleAttr === "host" || roleAttr === "admin" || roleAttr === "user") {
+            setPeerRole(identity, roleAttr);
+          }
         },
         onDisconnected: () => {
           // ConnectionController overrides this; for the initial connect we
@@ -207,6 +251,9 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
         color: session.color,
         characterIndex: joinDraft.characterIndex,
       });
+      // M2: publish our moderation role as the display-only `role`
+      // attribute (contract §1). Peers show the host badge from this.
+      void setRoleAttribute(room, myRole);
 
       const cache: ConnectCache = {
         backendUrl: BACKEND_URL,
@@ -242,7 +289,14 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
       }
     } catch (e) {
       console.error(e);
-      const msg = e instanceof Error ? e.message : String(e);
+      // M2: translate contract error codes (e.g. the server's nickname
+      // sensitive-word rejection) into human-readable hints.
+      let msg = e instanceof Error ? e.message : String(e);
+      const details = (e as { details?: unknown } | null)?.details;
+      const code = moderationErrorCode(details);
+      if (code) {
+        msg = `${moderationErrorMessage(code)} [${msg}]`;
+      }
       setConn("error", msg);
       setLocalError(msg);
     }
@@ -253,6 +307,23 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
       <div className="join-card">
         <h1>Open Study Room</h1>
 
+        {kicked && (
+          <div className="kicked-banner" role="alert" aria-live="assertive">
+            <span>
+              您已被房主请出房间{kicked.reason ? `（${kicked.reason}）` : "。"}
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setKicked(null)}
+              aria-label="Dismiss"
+              title="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <label>
           Nickname
           <input
@@ -260,6 +331,11 @@ export function JoinScreen({ onConnected, onOpenEditor }: JoinScreenProps) {
             maxLength={32}
             onChange={(e) => setJoinDraft({ nickname: e.target.value })}
           />
+          {nicknameHasSensitiveWord && (
+            <span className="hint warn">
+              该昵称可能包含敏感词，服务器可能拒绝入场（最终以服务器裁决为准）。
+            </span>
+          )}
         </label>
 
         <label>

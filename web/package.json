@@ -6,8 +6,9 @@
   "description": "Open Study Room web client. Connects to the same LiveKit room + Open Study Room backend (server/).",
   "scripts": {
     "sync-assets": "node scripts/sync-assets.mjs",
-    "predev": "npm run sync-assets",
-    "prebuild": "npm run sync-assets",
+    "sync-words": "node scripts/sync-moderation-words.mjs",
+    "predev": "npm run sync-assets && npm run sync-words",
+    "prebuild": "npm run sync-assets && npm run sync-words",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

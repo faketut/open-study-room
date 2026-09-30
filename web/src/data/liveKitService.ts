@@ -198,6 +198,27 @@ export function setPeerVideoSubscribed(
   });
 }
 
+/** Per-remote-peer audio subscription toggle. Used by the M2 local block
+ *  path (docs/contracts.md §5): unsubscribing a blocked peer's audio saves
+ *  bandwidth; `setPeerVolume(…, 0)` is the belt-and-braces guard. Re-
+ *  subscribing on unblock restores audio. Mirrors
+ *  `setPeerVideoSubscribed`. */
+export function setPeerAudioSubscribed(
+  room: Room,
+  identity: string,
+  subscribed: boolean,
+): void {
+  const rp = room.remoteParticipants.get(identity);
+  if (!rp) return;
+  rp.audioTrackPublications.forEach((pub) => {
+    try {
+      pub.setSubscribed(subscribed);
+    } catch (err) {
+      console.warn("setSubscribed(audio) failed", identity, err);
+    }
+  });
+}
+
 /** Toggle screen share publish. Same return contract as `setCameraEnabled`
  *  so the UI can latch on denial and stop re-prompting. The browser's screen
  *  picker dialog is what fires on the `true` call. */
@@ -262,6 +283,21 @@ export async function setZoneAttributes(
     zone: zoneId,
     zone_kind: zoneKind,
   });
+}
+
+/** Publish the local participant's moderation role (`host` | `user`) as a
+ *  LiveKit attribute. Display-only: the server never reads it (the DB is
+ *  the only source of truth for roles) — peers use it for the host badge.
+ *  Contract: docs/contracts.md "Moderation (M2)" §1. */
+export async function setRoleAttribute(
+  room: Room,
+  role: string,
+): Promise<void> {
+  try {
+    await room.localParticipant.setAttributes({ role });
+  } catch (err) {
+    console.warn("setRoleAttribute failed", err);
+  }
 }
 
 /** Spatial-audio distance falloff (M1 T3). Ported from Android

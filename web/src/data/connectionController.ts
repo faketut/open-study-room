@@ -2,6 +2,7 @@ import type { Room } from "livekit-client";
 import {
   connectLiveKit,
   publishProfileAttributes,
+  setRoleAttribute,
   type PeerEvents,
 } from "./liveKitService";
 import { createSession, type SessionResponse } from "./sessionApi";
@@ -179,6 +180,12 @@ export function startConnectionController(
       color: deps.cache.color,
       characterIndex: deps.cache.characterIndex,
     });
+    // M2: re-publish the display-only role attribute on reconnect so the
+    // host badge survives a rejoin (contract §1).
+    void setRoleAttribute(
+      room,
+      deps.cache.session.role === "host" ? "host" : "user",
+    );
     return room;
   }
 

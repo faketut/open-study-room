@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { Db } from "../db.js";
 import { getRoomSnapshot } from "../db.js";
 
-const FRESH_WINDOW_MS = 60_000;
+/** Freshness window shared by the snapshot and by host-transfer member
+ *  checks (contract §6: the transfer target must be a current room member). */
+export const FRESH_WINDOW_MS = 60_000;
 
 export function registerSnapshotRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { room: string } }>(

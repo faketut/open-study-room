@@ -15,6 +15,11 @@ export interface SessionResponse {
   nickname: string;
   color: string;
   expiresAt: number;
+  /** M2 moderation role, assigned by the server (first joiner = host).
+   *  Display-only on the client — the server's DB is the only source of
+   *  truth for roles. Optional: older servers don't send it (default
+   *  "user"). Contract: docs/contracts.md "Moderation (M2)" §1. */
+  role?: "host" | "user";
 }
 
 export class SessionApiError extends Error {

@@ -241,3 +241,331 @@ Clients MUST update `zone` / `zone_kind` when crossing a zone boundary
 | Web | `web/src/data/sessionApi.ts` | `reportState` (zone-bearing state reports: on boundary crossing + 30s heartbeat) |
 | Server | `server/src/routes/state.ts` | `zone` field ingestion |
 | Server | `server/src/livekit.ts` | server-side mute helper |
+
+## Moderation (M2: stranger safety)
+
+Open Study Room is a public room: strangers walk in. M2 adds the minimum
+viable safety loop — **report → review → act** — while staying honest about
+the architecture: chat travels peer-to-peer over the LiveKit data channel, so
+the server can never see, filter, or throttle chat content. Everything the
+server *can* do (REST, JWT issuance, LiveKit Server API) is specified below;
+everything else is client-side, and the contract says so explicitly.
+
+### 1. Role model
+
+Roles: `host` > `admin` > `user`.
+
+| Rule | Value |
+| --- | --- |
+| Who is host | The **first** user to join a room (first successful `POST /v1/sessions` for that room). The server records it in the DB at session issuance. |
+| Host transfer | The current host may transfer host to another room member (`POST /v1/rooms/:room/host`). The old host becomes `user`. |
+| admin | **Placeholder only.** M2 has no login; sessions are device-based. `admin` carries no permissions in M2 and cannot be granted until the P1 identity system lands. |
+
+#### The single security rule that everything else depends on
+
+> **The DB is the only source of truth for roles.** The LiveKit participant
+> attribute `role` (below) is a UI display hint. The server MUST resolve the
+> caller's role from `room_roles` on every moderation request and MUST NEVER
+> trust a client-supplied role — the client holds `canUpdateOwnMetadata` and
+> can forge any attribute.
+
+#### `room_roles` table
+
+```sql
+CREATE TABLE IF NOT EXISTS room_roles (
+  room       TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  role       TEXT NOT NULL CHECK (role IN ('host', 'admin')),
+  granted_by TEXT,
+  granted_at INTEGER NOT NULL,
+  PRIMARY KEY (room, user_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_room_roles_room ON room_roles(room);
+```
+
+- Only `host` / `admin` rows are stored. **No row ⇒ the user is a plain `user`.**
+- `granted_by`: userId of the host who granted the role (`NULL` for the
+  first-joiner host, which nobody granted); `granted_at`: epoch ms.
+- `POST /v1/sessions` response gains `role: "host" | "user"` (the caller now
+  knows their own role for UI).
+- **LiveKit participant attribute `role`** (values `host` / `admin` / `user`,
+  default `user`): the client publishes it from the sessions response via
+  `setAttributes` for peer badges only. The server never reads it.
+
+#### Where it lives (M2 implementation targets)
+
+| Side | File | Symbol |
+| --- | --- | --- |
+| Server | `server/src/db.ts` | `room_roles` schema + `getRoomRole` / `setRoomRole` helpers |
+| Server | `server/src/routes/sessions.ts` | first-joiner host assignment |
+| Web | `web/src/data/liveKitService.ts` | publish `role` attribute (display only) |
+
+### 2. Reports data model
+
+```sql
+CREATE TABLE IF NOT EXISTS reports (
+  id          TEXT PRIMARY KEY,          -- uuid
+  room        TEXT NOT NULL,
+  reporter_id TEXT NOT NULL,
+  target_id   TEXT NOT NULL,
+  reason      TEXT NOT NULL CHECK (reason IN ('spam','harassment','nsfw','other')),
+  detail      TEXT,                      -- optional free text, max 500 chars
+  created_at  INTEGER NOT NULL,          -- epoch ms
+  status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','actioned','dismissed')),
+  handled_by  TEXT,                      -- host userId who closed it
+  handled_at  INTEGER,                  -- epoch ms
+  FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_id)   REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_reports_room_status ON reports(room, status, created_at);
+```
+
+- `reason` enum: `spam` | `harassment` | `nsfw` | `other`.
+- **State machine**: `open → actioned` or `open → dismissed`. Both end states
+  are terminal; no transition back to `open`, no transitions between the end
+  states. Closing a non-`open` report is a `409 already_handled`.
+- `detail` is optional, max 500 chars (server enforces, mirrors `CHAT_TEXT_MAX_LEN`).
+- Any joined room member may file a report. Report creation is rate-limited
+  (see §4); the host lists and closes reports via REST (§6).
+
+### 3. Enforcement actions
+
+#### 3a. Mute (moderation mute) vs zone mute — two layers, never leaking into each other
+
+There are **two independent mute layers**. Their union decides whether a mic
+track is server-muted:
+
+- **Layer Z (zone mute)** — transient, from the M1 zone edge detector
+  (silent zone entry/exit). Never persisted.
+- **Layer M (moderation mute)** — persisted in the `mutes` table:
+
+```sql
+CREATE TABLE IF NOT EXISTS mutes (
+  room      TEXT NOT NULL,
+  user_id   TEXT NOT NULL,
+  muted_by  TEXT NOT NULL,               -- host userId (audit: who)
+  muted_at  INTEGER NOT NULL,            -- epoch ms (audit: when)
+  PRIMARY KEY (room, user_id),
+  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE CASCADE,
+  FOREIGN KEY (muted_by) REFERENCES users(id)  ON DELETE CASCADE
+);
+```
+
+Mechanics: server calls `RoomMutator.muteMicrophone` /
+`RoomMutator.unmuteMicrophone` (LiveKit `mutePublishedTrack` by resolved mic
+track SID, as in M1).
+
+**Composition rules (normative):**
+
+1. Effective state = muted iff (row in `mutes`) OR (zone policy says mute).
+2. Zone **enter**(`silent`): mute the track. Does NOT touch `mutes`.
+3. Zone **leave**(`silent`): unmute the track **only if there is no row in
+   `mutes` for that user** — the moderation mute survives zone movement.
+   (The M1 "restore on leave" logic gains this one guard clause.)
+4. Moderation **mute**: insert into `mutes`, then `muteMicrophone` (if a mic
+   track is published).
+5. Moderation **unmute**: delete the `mutes` row, then re-apply the zone
+   policy — if the user's current `zone_kind` (from `room_state`) is
+   `silent`, the track stays muted under Layer Z; otherwise unmute.
+6. A muted user who rejoins keeps Layer M (the row is keyed by `user_id`,
+   which is stable per device). The server re-applies it when it next sees
+   their mic track; clients SHOULD also self-enforce from the sessions
+   response until then.
+
+#### 3b. Kick
+
+- Server sends a reliable data-channel notice to the target's LiveKit
+  identity, then calls `removeParticipant(room, identity)` (available on
+  `RoomServiceClient`).
+- **Kick notice wire format** (JSON over `RoomServiceClient.sendData`,
+  reliable, destination = target identity):
+  `{"type":"kick_notice","reason":"..."}` — `reason` is the host-supplied
+  reason (max 140 chars) or empty string. The client MUST render an explicit
+  "You were removed by the host" screen with this reason, not a generic
+  connection error. (If the disconnect lands before the notice, the client
+  falls back to a generic "removed from room" message.)
+- **Same-UTC-day rejoin refusal** — `kicks` table:
+
+```sql
+CREATE TABLE IF NOT EXISTS kicks (
+  room      TEXT NOT NULL,
+  user_id   TEXT NOT NULL,
+  kicked_by TEXT NOT NULL,               -- host userId (audit: who)
+  kicked_at INTEGER NOT NULL,            -- epoch ms (audit: when)
+  day       TEXT NOT NULL,               -- UTC date 'YYYY-MM-DD' (audit + expiry)
+  reason    TEXT,                        -- host-supplied reason, max 140 chars
+  PRIMARY KEY (room, user_id),
+  FOREIGN KEY (user_id)   REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (kicked_by) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+- `POST /v1/sessions` MUST check `kicks` **before** issuing a token: if a row
+  exists for (room, user_id) whose `day` equals today's UTC date → `403
+  { error: "kicked" }`. The block expires automatically at the next UTC day
+  boundary (no cleanup job needed; stale rows are inert).
+
+#### 3c. Ban
+
+**Not in M2.** Explicitly deferred to P1. The `moderate` endpoint accepts only
+`mute | unmute | kick`; `action: "ban"` returns `400 { error:
+"invalid_action" }`. No ban table, no ban endpoint.
+
+#### 3d. Protection against mistakes
+
+- **UI double-confirm**: the host client MUST show a destructive-action
+  confirm dialog before calling `moderate` with `mute` or `kick`
+  (dialog shows target nickname + action + reason field). This is a client
+  requirement; the server does not second-guess.
+- **Audit trail**: every action writes who/when — `mutes.muted_by/at`,
+  `kicks.kicked_by/at/day`, `reports.handled_by/at`, `room_roles.granted_by/at`.
+- **The kicked/muted user sees a clear reason**: kick notice packet (§3b);
+  for mutes the client shows a "muted by host" indicator.
+
+### 4. Rate limiting and filtering (architecture-honest)
+
+#### What the server cannot do
+
+Chat travels **peer-to-peer** over the LiveKit data channel
+(`publishReliable` in `web/src/data/liveKitService.ts`; wire format in
+`web/src/domain/chatPacket.ts`). The server never sees chat bytes, so it
+**cannot rate-limit, filter, or censor chat**. The contract does not pretend
+otherwise:
+
+- **Client-side chat send throttle (normative):** at most **1 message per
+  2 seconds** (`CHAT_SEND_MIN_INTERVAL_MS = 2000`). Faster sends go into a
+  FIFO of max 3 (`CHAT_QUEUE_MAX = 3`); overflow is dropped and the UI shows
+  a "sending too fast" toast. This is per client, best-effort — a hostile
+  client can bypass it, and the moderation loop (§2–3) is the backstop.
+- **Server rate limits cover REST only.** Follow the `sessions.ts` pattern:
+  `@fastify/rate-limit` registered in a scoped plugin. Suggested defaults
+  (server config may tune):
+  - `POST /v1/rooms/:room/reports` — 10/min per caller
+  - `POST /v1/rooms/:room/moderate` — 30/min per caller
+  - `POST /v1/rooms/:room/host` — 10/min per caller
+  - `GET /v1/rooms/:room/reports` — 60/min per caller
+
+#### Nickname validation (server-side, new in M2)
+
+Supersedes the Nickname section's "server accepts whatever the client sends"
+row. `POST /v1/sessions` MUST validate the nickname:
+
+1. `trim().length` in **1–32** (tightens the current server-side 40 to match
+   web `NICKNAME_MAX_LEN`; update the zod schema).
+2. **Sensitive-word check** against `server/src/moderation/words.ts`
+   (minimal CN+EN list). Match rule: case-insensitive; Latin entries match
+   on word boundaries (so `class` does not trip on `ass`); CJK entries match
+   as substrings. Violation → `400 { error: "nickname_rejected" }`
+   (no matched word echoed back).
+3. The web client pre-validates locally with the same rule before sending.
+4. Tests MUST cover both hits and false-positive boundaries (e.g. a word
+   containing a Latin entry as a substring must NOT be rejected).
+
+#### Chat content filter (client-side, pre-send)
+
+- The sender replaces each matched word with `*` repeated to the word's
+  length, using the same `words.ts` source and the same match rule as
+  nicknames, **before** `encodeChat`.
+- **Source sync (normative):** `server/src/moderation/words.ts` is the single
+  source of truth. The web build copies it to `web/src/data/moderationWords.ts`
+  at build time (prebuild step); a repo-level test asserts the copy is
+  byte-identical to the source so the two filters can never drift.
+
+### 5. Local block (T5) — client-only
+
+Blocking is purely local: the blocked user is never notified, and the server
+knows nothing about it.
+
+- **Storage key:** `syncle.blocked.<room>` (keeps the legacy `syncle` prefix
+  per the naming freeze at the top of this document). Value: JSON array of
+  blocked `userId` strings. Unblocking removes the id; the change takes
+  effect immediately.
+- **Filter points** (all on the receiving client, keyed by the sender's
+  LiveKit identity / `userId`):
+  - **Audio:** `setSubscribed(identity, false)` (saves bandwidth) **and**
+    `setVolume(identity, 0)` as a belt-and-braces guard — see
+    `web/src/data/liveKitService.ts`.
+  - **Chat:** drop `decodeChat` payloads from blocked senders before they
+    reach the chat store/render path (all scopes, including `dm`).
+  - **Reactions:** reactions ride the chat packet — dropped at the same
+    filter point as chat.
+
+### 6. REST endpoint shapes
+
+Common auth for every endpoint below: `Authorization: Bearer <LiveKit JWT>`
+→ `extractBearer` → `verifyJoinToken(apiSecret)` → caller `userId =
+payload.sub`. Then: if `payload.video.room` is set and ≠ `:room` →
+`403 { error: "room_mismatch" }`. Then the role check reads **`room_roles`
+from the DB** (§1 rule). Shared error codes: `401 { error:
+"missing_bearer" }`, `401 { error: "invalid_token" }`, `403 { error:
+"not_host" }` (caller is not host/admin), `400 { error: "invalid_body" }`.
+
+#### `POST /v1/rooms/:room/reports` — file a report
+
+- Auth: any joined member (valid token, room matches). Rate-limited (§4).
+- Body: `{ "targetId": string, "reason": "spam"|"harassment"|"nsfw"|"other", "detail"?: string }`
+  (`detail` max 500 chars; `targetId` must be a known user → else
+  `404 { error: "target_not_found" }`).
+- Errors: `400 { error: "invalid_reason" }`.
+- Success: `201 { "id": "<uuid>", "status": "open" }`.
+
+#### `GET /v1/rooms/:room/reports` — list reports
+
+- Auth: host/admin only (DB role check).
+- Query: `?status=open` (default) | `all`.
+- Success: `200 { "reports": [ { "id", "reporterId", "reporterNickname", "targetId", "targetNickname", "reason", "detail", "createdAt", "status", "handledBy", "handledAt" } ] }`
+  ordered by `created_at ASC`.
+
+#### `POST /v1/rooms/:room/reports/:id/action` — close a report
+
+- Auth: host/admin only.
+- Body: `{ "decision": "actioned" | "dismissed" }`.
+- Effects: sets `status`, `handled_by = caller`, `handled_at = now`. Closing
+  does NOT itself mute/kick — the host then calls `moderate` separately.
+- Errors: `404 { error: "report_not_found" }`, `409 { error:
+  "already_handled" }` (status ≠ `open`).
+- Success: `200 { "id", "status": "actioned"|"dismissed" }`.
+
+#### `POST /v1/rooms/:room/moderate` — mute / unmute / kick
+
+- Auth: host/admin only (DB role check). Rate-limited (§4).
+- Body: `{ "targetUserId": string, "action": "mute" | "unmute" | "kick", "reason"?: string }`
+  (`reason` max 140 chars; used for the kick notice and the `kicks` row).
+- Rules:
+  - `targetUserId` ≠ caller → else `400 { error: "cannot_target_self" }`.
+  - Target must hold no `host` row → else `400 { error: "target_is_host" }`
+    (transfer host first).
+  - `action: "ban"` (or anything else) → `400 { error: "invalid_action" }`.
+  - `mute`: idempotent — inserting an existing `(room, user_id)` is a
+    no-op success; calls `muteMicrophone`.
+  - `unmute`: deletes the `mutes` row (no-op if absent), then re-applies
+    the zone policy per §3a rule 5.
+  - `kick`: sends `kick_notice` (reliable data) then `removeParticipant`,
+    then inserts/refreshes the `kicks` row (same-day re-kick refreshes
+    `kicked_at`/`reason`).
+- Success: `200 { "action": "<action>", "targetUserId": "<id>" }`.
+
+#### `POST /v1/rooms/:room/host` — transfer host
+
+- Auth: current host only (caller must hold the `host` row; an `admin`
+  placeholder cannot transfer).
+- Body: `{ "toUserId": string }`.
+- Rules: `toUserId` must be a current room member — i.e. a fresh row in
+  `room_state` for this room (reuse the snapshot freshness window) — else
+  `404 { error: "member_not_found" }`. Cannot transfer to self
+  (`400 { error: "invalid_body" }`).
+- Effects (atomic): delete caller's `room_roles` row; insert
+  `(room, toUserId, 'host', granted_by = caller, granted_at = now)`.
+- Success: `200 { "host": "<toUserId>" }`.
+
+### Self-consistency checklist (for the M2 implementer)
+
+Tables: `room_roles`, `reports`, `mutes`, `kicks` — each referenced exactly
+where used above, no other tables. Endpoints: five, all under
+`/v1/rooms/:room/`, all bearer-authenticated against the DB role. State
+machine: `open → actioned/dismissed` only. Layers: zone mute and moderation
+mute compose by union and are lifted independently (§3a rules 1–6).
+Ban: absent by design. Wordlist: one source file, one build-time copy, one
+drift test. Block list: one localStorage key, three filter points, zero
+server knowledge.

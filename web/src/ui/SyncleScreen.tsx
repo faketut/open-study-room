@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track, type Participant } from "livekit-client";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff,
-  MessageSquare, StickyNote, X, Settings,
+  MessageSquare, StickyNote, X, Settings, Shield,
 } from "lucide-react";
 import { SpatialCanvas } from "./SpatialCanvas";
 import { TouchJoystick } from "./TouchJoystick";
@@ -32,6 +32,7 @@ import {
   setCameraEnabled,
   setMicEnabled,
   setPeerVideoSubscribed,
+  setPeerAudioSubscribed,
   setPeerVolume,
   setScreenShareEnabled,
   setStatusAttribute,
@@ -40,6 +41,7 @@ import {
   setZoneAttributes,
   attenuationFor,
 } from "../data/liveKitService";
+import { isBlockedIdentity } from "../domain/blockList";
 import {
   zoneKindAt,
   zoneAllowsAudio,
@@ -73,6 +75,7 @@ import { reportState } from "../data/sessionApi";
 import { ChatPanel } from "./ChatPanel";
 import { VideoTiles } from "./VideoTiles";
 import { WhosWherePanel } from "./WhosWherePanel";
+import { ModerationPanel } from "./ModerationPanel";
 import { MeetingView } from "./MeetingView";
 import { MiniPanel } from "./MiniPanel";
 import { BoardModal } from "./BoardModal";
@@ -404,6 +407,15 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // via CSS `display: contents`, so these only matter on coarse pointers).
   const [whosWhereOpen, setWhosWhereOpen] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
+  // M2 moderation panel (host-only). Entry button renders only when
+  // `self.role === "host"`.
+  const [moderationOpen, setModerationOpen] = useState(false);
+  // M2: set by the kick_notice data packet (see JoinScreen). Disconnects
+  // and routes back to JoinScreen, which shows the reason.
+  const kicked = useSyncle((s) => s.kicked);
+  // Room name, for the per-room block list key (`syncle.blocked.<room>`).
+  // Stable for the session; captured by the volume effect below.
+  const roomName = cache?.room ?? "";
   // MW1-4: performance tier (persisted). Drives frame throttle + DPR cap.
   const [perfOpen, setPerfOpen] = useState(false);
   const [perfTier, setPerfTier] = useState<PerfTier>(() =>
@@ -916,8 +928,15 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
   // all incoming audio. Runs on a 250ms cadence reading the store directly
   // (not the 20Hz position stream); an epsilon cache skips redundant
   // setVolume calls, mirroring Android's shouldApplyVolume.
+  //
+  // M2 T5 local block (contract §5) is enforced here too: a blocked peer's
+  // audio is unsubscribed (saves bandwidth) and forced to volume 0
+  // (belt-and-braces). The block list is read fresh every tick so
+  // block/unblock takes effect within the 250ms cadence; unblocking
+  // re-subscribes.
   useEffect(() => {
     const lastVolume = new Map<string, number>();
+    const blockedUnsub = new Set<string>();
     const applyVolumes = () => {
       const st = useSyncle.getState();
       const me = st.self;
@@ -927,9 +946,20 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       const alive = new Set<string>();
       for (const identity of room.remoteParticipants.keys()) {
         alive.add(identity);
+        const blocked =
+          roomName !== "" && isBlockedIdentity(roomName, identity);
+        if (blocked && !blockedUnsub.has(identity)) {
+          blockedUnsub.add(identity);
+          setPeerAudioSubscribed(room, identity, false);
+        } else if (!blocked && blockedUnsub.has(identity)) {
+          blockedUnsub.delete(identity);
+          setPeerAudioSubscribed(room, identity, true);
+        }
         const peer = st.peers.get(identity);
         let volume: number;
-        if (me.manualBusy) {
+        if (blocked) {
+          volume = 0;
+        } else if (me.manualBusy) {
           volume = 0;
         } else if (myKind === "silent" && !ptt) {
           volume = 0;
@@ -946,11 +976,14 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       for (const id of lastVolume.keys()) {
         if (!alive.has(id)) lastVolume.delete(id);
       }
+      for (const id of blockedUnsub) {
+        if (!alive.has(id)) blockedUnsub.delete(id);
+      }
     };
     applyVolumes();
     const id = window.setInterval(applyVolumes, 250);
     return () => window.clearInterval(id);
-  }, [room]);
+  }, [room, roomName]);
 
   // M5 theme: apply to the document root so CSS `[data-theme="dark"]`
   // overrides take effect. Persistence is handled by the store setter.
@@ -967,6 +1000,16 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
       console.warn("setNowPlayingAttribute failed", err),
     );
   }, [room, selfNowPlaying]);
+
+  // M2: the host removed us (kick_notice packet). Disconnect actively and
+  // route back to JoinScreen, which renders the kick reason from the
+  // store. `room.disconnect()` fires Disconnected with CLIENT_INITIATED —
+  // a terminal reason — so this can never loop into the reconnect cycle.
+  useEffect(() => {
+    if (kicked) {
+      void room.disconnect().finally(onLeave);
+    }
+  }, [room, kicked, onLeave]);
 
   if (!map || !self) return null;
 
@@ -1064,7 +1107,11 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             side="right"
             title="Who's where"
           >
-            <WhosWherePanel />
+            <WhosWherePanel
+              roomName={roomName}
+              backendUrl={cache?.backendUrl ?? ""}
+              getToken={() => cache?.session.token ?? ""}
+            />
           </MobileDrawer>
         </>
       )}
@@ -1117,6 +1164,17 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           >
             <Settings size={14} aria-hidden="true" />
           </button>
+          {self?.role === "host" && (
+            <button
+              type="button"
+              className="view-toggle"
+              onClick={() => setModerationOpen(true)}
+              title="Moderation panel (host)"
+              aria-label="Moderation panel"
+            >
+              <Shield size={14} aria-hidden="true" />
+            </button>
+          )}
         </div>
         {perfOpen && (
           <div className="perf-panel" role="dialog" aria-label="Performance settings">
@@ -1445,6 +1503,16 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
           onVector={(v) => {
             touchVecRef.current = v;
           }}
+        />
+      )}
+      {/* M2 moderation panel — host only (contract §6). */}
+      {moderationOpen && self?.role === "host" && (
+        <ModerationPanel
+          room={room}
+          backendUrl={cache?.backendUrl ?? ""}
+          roomName={roomName}
+          getToken={() => cache?.session.token ?? ""}
+          onClose={() => setModerationOpen(false)}
         />
       )}
       <ReconnectOverlay onRetry={onRetryReconnect} />

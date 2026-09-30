@@ -70,6 +70,10 @@ export interface RemotePeer {
    *  `character` LiveKit attribute (web-only). When missing, renderer falls
    *  back to a stable hash of the identity so old clients still get a sprite. */
   characterIndex?: number;
+  /** M2 moderation role, published by the peer as the `role` LiveKit
+   *  attribute (display-only; the server DB is the only source of truth).
+   *  Drives the host badge in the UI. Contract: docs/contracts.md §1. */
+  role?: "host" | "admin" | "user";
 }
 
 export interface LocalSelf {
@@ -93,6 +97,11 @@ export interface LocalSelf {
    *  screen and persisted to localStorage under `syncle.charIndex`.
    *  Broadcast as the `character` LiveKit attribute. */
   characterIndex?: number;
+  /** M2 moderation role from the sessions response (`host` = first joiner).
+   *  Published back as the display-only `role` LiveKit attribute; gates the
+   *  host-only moderation panel. Defaults to "user" when the server
+   *  doesn't send it. Contract: docs/contracts.md "Moderation (M2)" §1. */
+  role: "host" | "user";
 }
 
 export interface JoinDraft {
@@ -185,6 +194,9 @@ interface SyncleState {
     patch: { name?: string; color?: string; characterIndex?: number },
   ) => void;
   setPeerStatus: (identity: string, status: AvatarStatus) => void;
+  /** M2: update a peer's display-only moderation role from the `role`
+   *  LiveKit attribute. */
+  setPeerRole: (identity: string, role: "host" | "admin" | "user") => void;
   removePeer: (identity: string) => void;
   /** Drop the entire peer map. Used during a reconnect so we don't show
    *  stale ghosts; remote participants re-announce themselves on rejoin. */
@@ -227,6 +239,13 @@ interface SyncleState {
    *  `syncle.miniMode`. */
   miniMode: boolean;
   setMiniMode: (on: boolean) => void;
+  /** Set when a `kick_notice` data packet arrives (contract §3b): the host
+   *  removed this client. SyncleScreen disconnects and App routes back to
+   *  JoinScreen, which renders the reason. NOT cleared by `reset()` — the
+   *  kicked banner must survive the leave transition; JoinScreen clears it
+   *  on the next successful join or on dismiss. */
+  kicked: { reason: string } | null;
+  setKicked: (k: { reason: string } | null) => void;
   reset: () => void;
 }
 
@@ -316,6 +335,7 @@ export const useSyncle = create<SyncleState>((set) => ({
   joinedChannelIds: new Set(),
   theme: readTheme(safeStorage),
   miniMode: readMiniMode(safeStorage),
+  kicked: null,
   setJoinDraft: (patch) =>
     set((s) => ({ joinDraft: { ...s.joinDraft, ...patch } })),
   setConn: (conn, err = null) => set({ conn, error: err }),
@@ -415,6 +435,14 @@ export const useSyncle = create<SyncleState>((set) => ({
       next.set(identity, { ...existing, status });
       return { peers: next };
     }),
+  setPeerRole: (identity, role) =>
+    set((s) => {
+      const existing = s.peers.get(identity);
+      if (!existing || existing.role === role) return {};
+      const next = new Map(s.peers);
+      next.set(identity, { ...existing, role });
+      return { peers: next };
+    }),
   removePeer: (identity) =>
     set((s) => {
       const next = new Map(s.peers);
@@ -494,6 +522,7 @@ export const useSyncle = create<SyncleState>((set) => ({
     writeMiniMode(safeStorage, miniMode);
     set({ miniMode });
   },
+  setKicked: (kicked) => set({ kicked }),
   reset: () =>
     set({
       conn: "idle",

@@ -1,12 +1,32 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { bucketByZone, zoneAllowsAudio, zonesOf, ZONE_KIND_LABELS } from "../domain/zones";
 import type { ZoneKind } from "../domain/zones";
 import { LOCAL_CHAT_IDENTITY, useSyncle } from "../state/syncleStore";
+import {
+  blockIdentity,
+  isBlockedIdentity,
+  unblockIdentity,
+} from "../domain/blockList";
+import { fileReport } from "../data/moderationApi";
+import {
+  REPORT_DETAIL_MAX_LEN,
+  REPORT_REASON_LABELS,
+  REPORT_REASONS,
+  isReportReason,
+  moderationErrorCode,
+  moderationErrorMessage,
+  type ReportReason,
+} from "../domain/moderation";
+import { SessionApiError } from "../data/sessionApi";
 
 /** "Who's where" sidebar. Lists every zone in the current map with the
  *  avatars currently inside it. Collapsed state persists in localStorage so
  *  reloads remember the user's preference. Hidden entirely when the map has
- *  no zones. */
+ *  no zones.
+ *
+ *  M2: peer chips open an action menu (block/unblock with a two-step
+ *  confirm, report with a reason dialog). Hosts get a 房主 badge from the
+ *  display-only `role` LiveKit attribute. */
 const COLLAPSED_KEY = "syncle.whosWhereCollapsed";
 
 function readCollapsed(): boolean {
@@ -17,7 +37,21 @@ function readCollapsed(): boolean {
   }
 }
 
-export function WhosWherePanel() {
+export interface WhosWherePanelProps {
+  /** Room name — keys the per-room block list (`syncle.blocked.<room>`). */
+  roomName?: string;
+  /** Backend base URL for the report endpoint. */
+  backendUrl?: string;
+  /** Returns the latest session JWT. */
+  getToken?: () => string;
+}
+
+interface ReportTarget {
+  identity: string;
+  name: string;
+}
+
+export function WhosWherePanel({ roomName = "", backendUrl = "", getToken }: WhosWherePanelProps) {
   const map = useSyncle((s) => s.map);
   const self = useSyncle((s) => s.self);
   const peerCount = useSyncle((s) => s.peers.size);
@@ -33,12 +67,63 @@ export function WhosWherePanel() {
   // itself triggers the re-render.
   void positionSig;
   const [collapsed, setCollapsed] = useState(readCollapsed);
+  // M2 peer actions.
+  const [menuIdentity, setMenuIdentity] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  // The block list lives in localStorage (not reactive); bump this to
+  // re-render after block/unblock.
+  const [blockVersion, setBlockVersion] = useState(0);
+  void blockVersion;
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
 
   if (!map || !self) return null;
   const zones = zonesOf(map);
   if (zones.length === 0) return null;
 
   const peers = useSyncle.getState().peers;
+  const moderationReady = roomName !== "" && backendUrl !== "" && !!getToken;
+
+  function showToast(msg: string) {
+    setToast(msg);
+  }
+
+  function handleBlock(identity: string, name: string) {
+    blockIdentity(roomName, identity);
+    setMenuIdentity(null);
+    setBlockVersion((v) => v + 1);
+    showToast(`已屏蔽 ${name}（本地生效，对方不会收到通知）`);
+  }
+
+  function handleUnblock(identity: string, name: string) {
+    unblockIdentity(roomName, identity);
+    setMenuIdentity(null);
+    setBlockVersion((v) => v + 1);
+    showToast(`已取消屏蔽 ${name}`);
+  }
+
+  async function submitReport(reason: ReportReason, detail: string) {
+    const target = reportTarget;
+    if (!target || !getToken) return;
+    try {
+      await fileReport(backendUrl, roomName, getToken(), {
+        targetId: target.identity,
+        reason,
+        detail: detail.trim().length > 0 ? detail.trim() : undefined,
+      });
+      showToast("举报已提交，房主会进行审核。");
+    } catch (err) {
+      showToast(`举报失败：${describeReportError(err)}`);
+    }
+    setReportTarget(null);
+    setMenuIdentity(null);
+  }
+
   const avatars = [
     {
       identity: LOCAL_CHAT_IDENTITY,
@@ -46,6 +131,7 @@ export function WhosWherePanel() {
       color: self.color,
       x: self.x,
       y: self.y,
+      isSelf: true,
     },
     ...Array.from(peers.values()).map((p) => ({
       identity: p.identity,
@@ -53,9 +139,13 @@ export function WhosWherePanel() {
       color: p.color ?? "#5AC8FA",
       x: p.x,
       y: p.y,
+      isSelf: false,
     })),
   ];
   const buckets = bucketByZone(map, avatars);
+  // bucketByZone returns ZoneOccupant ({identity,name,color}); look up our
+  // richer records (isSelf) by identity for the action menu / badges.
+  const avatarById = new Map(avatars.map((a) => [a.identity, a] as const));
   const totalKnown = avatars.length; // self + peers
   const inAnyZone = Array.from(buckets.values()).reduce(
     (s, list) => s + list.length,
@@ -123,6 +213,11 @@ export function WhosWherePanel() {
           {peerCount + 1}
         </span>
       </button>
+      {toast && (
+        <div className="whos-where-toast" role="status">
+          {toast}
+        </div>
+      )}
       {!collapsed && (
         <ul className="whos-where-list" role="list">
           {zoneGroups.map((g) => (
@@ -144,17 +239,66 @@ export function WhosWherePanel() {
                     </div>
                     {occupants.length > 0 ? (
                       <div className="whos-where-avatars">
-                        {occupants.slice(0, 5).map((o) => (
-                          <span
-                            key={o.identity}
-                            className="whos-where-avatar"
-                            style={{ background: o.color }}
-                            title={o.name}
-                            aria-label={o.name}
-                          >
-                            {initials(o.name)}
-                          </span>
-                        ))}
+                        {occupants.slice(0, 5).map((o) => {
+                          const full = avatarById.get(o.identity);
+                          const isSelf = full?.isSelf ?? o.identity === LOCAL_CHAT_IDENTITY;
+                          const blocked =
+                            !isSelf &&
+                            roomName !== "" &&
+                            isBlockedIdentity(roomName, o.identity);
+                          const role = isSelf
+                            ? self.role
+                            : peers.get(o.identity)?.role;
+                          const isHost = role === "host" || role === "admin";
+                          return (
+                            <span
+                              key={o.identity}
+                              className="whos-where-avatar-wrap"
+                            >
+                              <button
+                                type="button"
+                                className={`whos-where-avatar${blocked ? " blocked" : ""}${isHost ? " is-host" : ""}`}
+                                style={{ background: o.color }}
+                                title={
+                                  isSelf
+                                    ? `${o.name} (you)`
+                                    : `${o.name}${isHost ? " · 房主" : ""}${blocked ? " · 已屏蔽" : ""}`
+                                }
+                                aria-label={isSelf ? `${o.name} (you)` : o.name}
+                                aria-haspopup={!isSelf && moderationReady ? "menu" : undefined}
+                                onClick={() => {
+                                  if (isSelf || !moderationReady) return;
+                                  setMenuIdentity((cur) =>
+                                    cur === o.identity ? null : o.identity,
+                                  );
+                                }}
+                              >
+                                {initials(o.name)}
+                                {isHost && (
+                                  <span className="host-badge" aria-label="Room host">
+                                    房主
+                                  </span>
+                                )}
+                              </button>
+                              {menuIdentity === o.identity && !isSelf && (
+                                <PeerMenu
+                                  name={o.name}
+                                  blocked={blocked}
+                                  onBlock={() => handleBlock(o.identity, o.name)}
+                                  onUnblock={() => handleUnblock(o.identity, o.name)}
+                                  onReport={() => {
+                                    setReportTarget({
+                                      identity: o.identity,
+                                      name: o.name,
+                                    });
+                                    setMenuIdentity(null);
+                                  }}
+                                  onClose={() => setMenuIdentity(null)}
+                                />
+                              )}
+                            </span>
+                          );
+                        })}
                         {occupants.length > 5 && (
                           <span className="whos-where-overflow">
                             +{occupants.length - 5}
@@ -179,7 +323,157 @@ export function WhosWherePanel() {
           )}
         </ul>
       )}
+      {reportTarget && (
+        <ReportDialog
+          targetName={reportTarget.name}
+          onSubmit={(reason, detail) => void submitReport(reason, detail)}
+          onClose={() => setReportTarget(null)}
+        />
+      )}
     </aside>
+  );
+}
+
+/** Per-peer action menu: block/unblock (two-step confirm) + report. */
+function PeerMenu({
+  name,
+  blocked,
+  onBlock,
+  onUnblock,
+  onReport,
+  onClose,
+}: {
+  name: string;
+  blocked: boolean;
+  onBlock: () => void;
+  onUnblock: () => void;
+  onReport: () => void;
+  onClose: () => void;
+}) {
+  const [arming, setArming] = useState<"block" | "unblock" | null>(null);
+  return (
+    <div className="peer-menu" role="menu" aria-label={`Actions for ${name}`}>
+      <div className="peer-menu-name">{name}</div>
+      {blocked ? (
+        <button
+          type="button"
+          role="menuitem"
+          className={`peer-menu-item${arming === "unblock" ? " armed" : ""}`}
+          onClick={() => {
+            if (arming === "unblock") onUnblock();
+            else setArming("unblock");
+          }}
+        >
+          {arming === "unblock" ? "确认取消屏蔽？" : "取消屏蔽"}
+        </button>
+      ) : (
+        <button
+          type="button"
+          role="menuitem"
+          className={`peer-menu-item${arming === "block" ? " armed" : ""}`}
+          onClick={() => {
+            if (arming === "block") onBlock();
+            else setArming("block");
+          }}
+        >
+          {arming === "block" ? "确认屏蔽？" : "屏蔽"}
+        </button>
+      )}
+      <button
+        type="button"
+        role="menuitem"
+        className="peer-menu-item"
+        onClick={onReport}
+      >
+        举报
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="peer-menu-item peer-menu-cancel"
+        onClick={onClose}
+      >
+        取消
+      </button>
+    </div>
+  );
+}
+
+/** Report dialog: reason (4 options per contract) + optional detail
+ *  (≤500 chars) → POST /v1/rooms/:room/reports. */
+function ReportDialog({
+  targetName,
+  onSubmit,
+  onClose,
+}: {
+  targetName: string;
+  onSubmit: (reason: ReportReason, detail: string) => void;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState<ReportReason>("spam");
+  const [detail, setDetail] = useState("");
+  const detailLen = detail.length;
+  return (
+    <div
+      className="report-dialog-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Report ${targetName}`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="report-dialog">
+        <div className="report-dialog-title">举报 {targetName}</div>
+        <div className="report-reasons" role="radiogroup" aria-label="Report reason">
+          {REPORT_REASONS.map((r) => (
+            <label key={r} className="report-reason">
+              <input
+                type="radio"
+                name="report-reason"
+                checked={reason === r}
+                onChange={() => setReason(r)}
+              />
+              {REPORT_REASON_LABELS[r]}
+            </label>
+          ))}
+        </div>
+        <textarea
+          className="report-detail"
+          value={detail}
+          maxLength={REPORT_DETAIL_MAX_LEN}
+          placeholder="补充说明（可选，最多 500 字）"
+          rows={3}
+          onChange={(e) => setDetail(e.target.value)}
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label="Report detail"
+        />
+        <div className="report-detail-count">
+          {detailLen}/{REPORT_DETAIL_MAX_LEN}
+        </div>
+        <div className="report-dialog-actions">
+          <button
+            type="button"
+            className="peer-menu-item"
+            onClick={onClose}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className="peer-menu-item danger"
+            onClick={() => {
+              if (isReportReason(reason)) onSubmit(reason, detail);
+            }}
+          >
+            提交举报
+          </button>
+        </div>
+        <div className="report-dialog-note">
+          举报仅房主可见。屏蔽是本地操作，对方不会收到通知。
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -189,4 +483,13 @@ function initials(name: string): string {
   const parts = trimmed.split(/\s+/);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function describeReportError(err: unknown): string {
+  if (err instanceof SessionApiError) {
+    const code = moderationErrorCode(err.details);
+    if (code) return moderationErrorMessage(code);
+    return err.message;
+  }
+  return err instanceof Error ? err.message : String(err);
 }
