@@ -185,3 +185,12 @@ silent 区强制静音（服务端执行）、discussion 区按距离衰减语�
 | [docs/contracts.md](docs/contracts.md) | Shared wire contracts (web ↔ server) |
 | [design-system/syncle/MASTER.md](design-system/syncle/MASTER.md) | Design tokens |
 | [assets/](assets/) | World assets (map config, background, sprites) |
+
+## Credits
+
+- Map tiles: **"16x16 Small Indoor Tileset" by [Tilation](https://tilation.itch.io/16x16-small-indoor-tileset)**,
+  licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+  The file `assets/sprites/tilation-16x16.png` is a byte-identical copy of the
+  upstream PNG and stays CC BY-SA 4.0 (see
+  `assets/sprites/tilation-ATTRIBUTION.txt`) — a license exception inside this
+  otherwise MIT-licensed repository.

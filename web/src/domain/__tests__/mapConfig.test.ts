@@ -16,6 +16,8 @@ function proceduralMap(): MapConfig {
       { type: "wall", x: 80, y: 80, width: 40, height: 40 },
       { id: "table-eng", type: "table", x: 140, y: 80, width: 40, height: 40 },
     ],
+    tilegrid: null,
+    tileVisual: false,
     bounds: { x: 0, y: 0, width: 200, height: 200 },
   };
 }
@@ -32,6 +34,8 @@ function legacyMap(): MapConfig {
     ],
     tables: [],
     objects: [],
+    tilegrid: null,
+    tileVisual: false,
     bounds: { x: 0, y: 0, width: 300, height: 100 },
   };
 }
@@ -95,6 +99,8 @@ describe("applyMove", () => {
         // 200-wide horizontal wall band at y=80..100
         { type: "wall", x: 0, y: 80, width: 200, height: 20 },
       ],
+      tilegrid: null,
+      tileVisual: false,
       bounds: { x: 0, y: 0, width: 200, height: 200 },
     };
     // Start above the wall (y=65 with r=10 → top circle edge=55, bottom=75 — clear).
@@ -147,6 +153,8 @@ describe("findNearestNote", () => {
         { type: "note", x: 100, y: 100, width: 20, height: 20, text: "A" },
         { type: "note", x: 200, y: 100, width: 20, height: 20, text: "B" },
       ],
+      tilegrid: null,
+      tileVisual: false,
       bounds: { x: 0, y: 0, width: 400, height: 400 },
     };
   }
@@ -194,6 +202,8 @@ describe("findPortalAt", () => {
         // A non-portal that overlaps the same AABB as portal A
         { type: "rug", x: 100, y: 100, width: 40, height: 40 },
       ],
+      tilegrid: null,
+      tileVisual: false,
       bounds: { x: 0, y: 0, width: 800, height: 600 },
     };
   }
@@ -234,6 +244,8 @@ describe("findNearestBoard", () => {
         { type: "board", x: 300, y: 100, width: 40, height: 20 }, // no repo
         { type: "note", x: 105, y: 105, width: 10, height: 10 },
       ],
+      tilegrid: null,
+      tileVisual: false,
       bounds: { x: 0, y: 0, width: 400, height: 400 },
     };
   }

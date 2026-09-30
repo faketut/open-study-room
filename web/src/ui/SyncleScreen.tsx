@@ -44,6 +44,22 @@ import {
 } from "../data/liveKitService";
 import { isBlockedIdentity } from "../domain/blockList";
 import {
+  chairTableId,
+  findChairAt,
+  isTableFull,
+  tablesWithFreeSeats,
+} from "../domain/seating";
+import {
+  dequeue as queueDequeue,
+  emptyQueue,
+  enqueue as queueEnqueue,
+  isQueued as queueIsQueued,
+  pruneExpired as queuePruneExpired,
+  queuePosition as queueGetPosition,
+  type QueueState,
+} from "../domain/seatingQueue";
+import { FullHouseDialog } from "./FullHouseDialog";
+import {
   zoneKindAt,
   zoneAllowsAudio,
   zonesOf,
@@ -485,6 +501,103 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     title: string;
     body: string;
   } | null>(null);
+  // Pixel-art seating flow (contracts.md "Pixel-art tilemap" §4–§5).
+  const [fullHouseOpen, setFullHouseOpen] = useState(false);
+  const [queuePos, setQueuePos] = useState(0);
+  const [seatToast, setSeatToast] = useState<{ title: string; body: string } | null>(null);
+  const queueRef = useRef<QueueState>(emptyQueue());
+  const highlightTimerRef = useRef<number | null>(null);
+  // Auto-dismiss the seating toast.
+  useEffect(() => {
+    if (!seatToast) return;
+    const id = window.setTimeout(() => setSeatToast(null), 6000);
+    return () => window.clearTimeout(id);
+  }, [seatToast]);
+  /** Pulse-highlight a table for ~6 s (queue/overflow guidance). */
+  const pulseHighlightTable = useCallback((tableId: string) => {
+    setNearbyTable(tableId);
+    if (highlightTimerRef.current != null) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      highlightTimerRef.current = null;
+      // Recompute from proximity on next tick; clear the forced highlight.
+      setNearbyTable(null);
+    }, 6000);
+  }, []);
+
+  // Full-house dialog actions (contracts.md "Pixel-art tilemap" §5).
+  const handleQueueJoin = useCallback(() => {
+    const pos = queueEnqueue(queueRef.current, LOCAL_CHAT_IDENTITY, Date.now());
+    if (pos > 0) setQueuePos(pos);
+  }, []);
+  const handleOverflow = useCallback(() => {
+    setFullHouseOpen(false);
+    const state = useSyncle.getState();
+    const mapNow = state.map;
+    if (!mapNow) return;
+    const peerTableIds = [...state.peers.values()].map((p) => p.tableId);
+    const open = tablesWithFreeSeats(mapNow, "rest", state.self?.tableId ?? null, peerTableIds)
+      // Lounge first: the lobby/corridor are also "rest".
+      .filter((t) => t.id.startsWith("table-lounge"));
+    if (open.length > 0) {
+      setSeatToast({
+        title: "Lounge seats are open.",
+        body: "Follow the highlight — pick any free chair.",
+      });
+      pulseHighlightTable(open[0].id);
+    } else {
+      setSeatToast({ title: "Lounge is full too.", body: "Try queuing for the reading hall." });
+    }
+  }, [pulseHighlightTable]);
+  const handleFullHouseCancel = useCallback(() => {
+    if (queueIsQueued(queueRef.current, LOCAL_CHAT_IDENTITY)) {
+      queueDequeue(queueRef.current, LOCAL_CHAT_IDENTITY);
+      setQueuePos(0);
+    }
+    setFullHouseOpen(false);
+  }, []);
+
+  // Queue watcher: every second, expire stale entries and notify the local
+  // user when a reading-hall seat frees up (per-client queue, v1).
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const q = queueRef.current;
+      if (!queueIsQueued(q, LOCAL_CHAT_IDENTITY)) return;
+      const dropped = queuePruneExpired(q, Date.now());
+      if (dropped.includes(LOCAL_CHAT_IDENTITY)) {
+        setQueuePos(0);
+        setFullHouseOpen(false);
+        setSeatToast({ title: "Queue expired.", body: "You waited 5 minutes — try again or head to the lounge." });
+        return;
+      }
+      const state = useSyncle.getState();
+      const mapNow = state.map;
+      if (!mapNow || state.self?.tableId) {
+        // Sat down meanwhile → leave the queue quietly.
+        if (state.self?.tableId) {
+          queueDequeue(q, LOCAL_CHAT_IDENTITY);
+          setQueuePos(0);
+          setFullHouseOpen(false);
+        }
+        return;
+      }
+      const peerTableIds = [...state.peers.values()].map((p) => p.tableId);
+      const free = tablesWithFreeSeats(mapNow, "silent", state.self?.tableId ?? null, peerTableIds);
+      if (free.length > 0) {
+        queueDequeue(q, LOCAL_CHAT_IDENTITY);
+        setQueuePos(0);
+        setFullHouseOpen(false);
+        setSeatToast({
+          title: "A seat opened up in the reading hall!",
+          body: "Follow the highlight — tap a chair to sit.",
+        });
+        pulseHighlightTable(free[0].id);
+      } else {
+        // Keep the position fresh in the dialog.
+        setQueuePos(queueGetPosition(q, LOCAL_CHAT_IDENTITY));
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [pulseHighlightTable]);
   useEffect(() => {
     if (!self) return;
     const recompute = () => {
@@ -730,14 +843,60 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     }
   }, [chatOpen]);
 
+  // Pixel-art seating flow (contracts.md "Pixel-art tilemap" §4–§5): the
+  // single entry point for sitting. Shared by the E key, the touch action
+  // bar, and click/tap on a chair. Full tables (or a full reading hall)
+  // open the full-house dialog instead of sitting.
+  const attemptSit = useCallback((tableId: string) => {
+    tapTargetRef.current = null; // sitting cancels tap-to-move
+    const state = useSyncle.getState();
+    const selfNow = state.self;
+    const mapNow = state.map;
+    if (!selfNow || !mapNow) return;
+    if (selfNow.tableId) return; // already seated; stand via E / stand control
+    const peerTableIds = [...state.peers.values()].map((p) => p.tableId);
+    const table = mapNow.tables.find((t) => t.id === tableId);
+    if (!table) return;
+    const cx = table.x + table.width / 2;
+    const cy = table.y + table.height / 2;
+    const inReadingHall = mapNow.objects.some(
+      (o) =>
+        o.type === "zone" && o.kind === "silent" &&
+        cx >= o.x && cx <= o.x + o.width && cy >= o.y && cy <= o.y + o.height,
+    );
+    if (isTableFull(mapNow, tableId, selfNow.tableId, peerTableIds)) {
+      if (inReadingHall) {
+        // Full house: queue for the reading hall or overflow to the lounge.
+        setFullHouseOpen(true);
+      } else {
+        setSeatToast({ title: "That table is full.", body: "Try another table nearby." });
+      }
+      return;
+    }
+    // Sitting anywhere leaves the queue.
+    if (queueIsQueued(queueRef.current, LOCAL_CHAT_IDENTITY)) {
+      queueDequeue(queueRef.current, LOCAL_CHAT_IDENTITY);
+      setQueuePos(0);
+    }
+    setSelfTable(tableId);
+    void setTableAttribute(room, tableId).catch((err) =>
+      console.warn("setTableAttribute failed", err),
+    );
+  }, [room, setSelfTable]);
+
   // MW1-3: sit/stand toggle shared by the E key and the touch action bar.
   const toggleSit = useCallback(() => {
-    tapTargetRef.current = null; // sitting/standing cancels tap-to-move
     const state = useSyncle.getState();
     const selfNow = state.self;
     const mapNow = state.map;
     if (!selfNow || !mapNow) return;
     if (selfNow.tableId) {
+      tapTargetRef.current = null; // standing cancels tap-to-move
+      // Standing leaves the queue too.
+      if (queueIsQueued(queueRef.current, LOCAL_CHAT_IDENTITY)) {
+        queueDequeue(queueRef.current, LOCAL_CHAT_IDENTITY);
+        setQueuePos(0);
+      }
       setSelfTable(null);
       void setTableAttribute(room, null).catch((err) =>
         console.warn("setTableAttribute(null) failed", err),
@@ -749,14 +908,9 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         mapNow,
         TABLE_JOIN_RADIUS,
       );
-      if (near) {
-        setSelfTable(near.id);
-        void setTableAttribute(room, near.id).catch((err) =>
-          console.warn("setTableAttribute failed", err),
-        );
-      }
+      if (near) attemptSit(near.id);
     }
-  }, [room, setSelfTable]);
+  }, [room, setSelfTable, attemptSit]);
 
   // MW1-3: open nearest board (precedence, same as F) or note; shared by
   // the F key and the touch action bar.
@@ -1409,6 +1563,28 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     if (!isCoarsePointer) return;
     tapDownRef.current = { x: e.clientX, y: e.clientY, t: performance.now() };
   };
+  /** Shared chair hit-test: world coords → chair → its table id. */
+  const chairTableAt = useCallback((clientX: number, clientY: number, rect: DOMRect) => {
+    const st = useSyncle.getState();
+    const s = st.self;
+    const m = st.map;
+    if (!s || !m || s.tableId) return null; // no click-sit while seated
+    const vp = computeViewport(rect.width, rect.height, { x: s.x, y: s.y }, m);
+    const world = screenToWorld(clientX - rect.left, clientY - rect.top, vp);
+    const chair = findChairAt(m, world.x, world.y);
+    if (!chair) return null;
+    return chairTableId(chair, m.tables);
+  }, []);
+  // Pixel-art seating flow §4: desktop click on a chair sits at its table.
+  // (Coarse pointers use the tap path below so tap-to-move keeps working.)
+  const onCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isCoarsePointer) return;
+    const canvas = e.currentTarget.querySelector("canvas");
+    const rect = canvas?.getBoundingClientRect();
+    if (!rect) return;
+    const tableId = chairTableAt(e.clientX, e.clientY, rect);
+    if (tableId) attemptSit(tableId);
+  };
   const onCanvasPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const down = tapDownRef.current;
     tapDownRef.current = null;
@@ -1418,6 +1594,12 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     const canvas = e.currentTarget.querySelector("canvas");
     const rect = canvas?.getBoundingClientRect();
     if (!rect) return;
+    // Chairs win over floor: a tap on a chair sits instead of moving.
+    const tableId = chairTableAt(e.clientX, e.clientY, rect);
+    if (tableId) {
+      attemptSit(tableId);
+      return;
+    }
     const st = useSyncle.getState();
     const s = st.self;
     const m = st.map;
@@ -1463,6 +1645,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
             className="canvas-wrap"
             onPointerDown={onCanvasPointerDown}
             onPointerUp={onCanvasPointerUp}
+            onClick={onCanvasClick}
           >
             <SpatialCanvas
               highlightTable={nearbyTable}
@@ -2032,6 +2215,32 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         </MobileDrawer>
       )}
       <ReconnectOverlay onRetry={onRetryReconnect} />
+      {/* Pixel-art seating flow §5: full-house dialog + seating toasts. */}
+      {fullHouseOpen && (
+        <FullHouseDialog
+          queued={queuePos > 0}
+          queuePosition={queuePos}
+          onQueue={handleQueueJoin}
+          onOverflow={handleOverflow}
+          onCancel={handleFullHouseCancel}
+        />
+      )}
+      {seatToast && (
+        <div className="focus-toast" role="status" aria-live="polite">
+          <div className="focus-toast-text">
+            <div className="focus-toast-title">{seatToast.title}</div>
+            <div className="focus-toast-body">{seatToast.body}</div>
+          </div>
+          <button
+            type="button"
+            className="focus-toast-close"
+            onClick={() => setSeatToast(null)}
+            aria-label="Dismiss notification"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* M3 §6: in-app completion toast (always shown alongside the
           Notification API fire; the fallback for iOS/denied). */}
       {focusToast && (

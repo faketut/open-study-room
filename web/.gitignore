@@ -8,3 +8,4 @@ public/sprites/
 *.log
 *.tsbuildinfo
 .DS_Store
+public/templates/

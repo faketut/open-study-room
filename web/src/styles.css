@@ -3715,3 +3715,61 @@ button.whos-where-avatar {
   color: #9aa4b1;
   white-space: nowrap;
 }
+
+/* Full-house dialog (contracts.md "Pixel-art tilemap" §5). Centered modal
+ * over the canvas; buttons ≥56px for touch. */
+.fullhouse-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 8, 14, 0.55);
+  z-index: 60;
+}
+.fullhouse-card {
+  background: #1c2330;
+  border: 1px solid #3a4356;
+  border-radius: 12px;
+  padding: 20px 22px;
+  max-width: 340px;
+  width: calc(100% - 48px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.fullhouse-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #f0f4fa;
+  margin-bottom: 8px;
+}
+.fullhouse-body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #b9c2d0;
+  margin-bottom: 16px;
+}
+.fullhouse-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fullhouse-btn {
+  min-height: 56px;
+  border-radius: 10px;
+  border: 1px solid #4a5468;
+  background: #2a3344;
+  color: #eef2f8;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fullhouse-btn.primary {
+  background: #3d6db5;
+  border-color: #3d6db5;
+}
+.fullhouse-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #9aa4b1;
+  min-height: 44px;
+}

@@ -17,6 +17,8 @@ function makeMap(objects: MapObject[]): MapConfig {
     walkable: [],
     tables: [],
     objects,
+    tilegrid: null,
+    tileVisual: false,
     bounds: { x: 0, y: 0, width: 1000, height: 1000 },
   };
 }

@@ -1,0 +1,19 @@
+Attribution for tilation-16x16.png (sibling file)
+====================================================
+
+Asset: "16x16 Small Indoor Tileset"
+Author: Tilation (https://tilation.itch.io)
+Source: https://tilation.itch.io/16x16-small-indoor-tileset
+License: Creative Commons Attribution-ShareAlike 4.0 International
+         (CC BY-SA 4.0) — https://creativecommons.org/licenses/by-sa/4.0/
+
+This PNG is a byte-identical copy of the upstream file (SHA-256:
+d04d6743e0e54f342513186d8a4bc951f43873cc84c6eaee47e2081edd2f572e).
+Do not re-encode, crop, or recolor it.
+
+License exception: the Open Study Room repository is MIT-licensed, but
+THIS FILE remains CC BY-SA 4.0. If you remix, transform, or build upon
+this tileset (e.g. shipping a tilemap rendered from it), you must give
+appropriate credit to Tilation, link the license, and distribute your
+contributions under the same license. See contracts.md
+"Pixel-art tilemap + seating flow + focus cocoon" §1.

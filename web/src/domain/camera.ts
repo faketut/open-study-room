@@ -41,6 +41,33 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/** Focus cocoon (contracts.md "Pixel-art tilemap" §6): a zoomed variant of
+ *  `computeViewport` that pushes the camera toward `zoom`× centered on
+ *  `focusPos` (the seated table), clamped at map edges like the base
+ *  viewport. Pure — the render loop lerps a live multiplier toward the
+ *  target and calls this each frame. */
+export function computeZoomedViewport(
+  viewportW: number,
+  viewportH: number,
+  focusPos: { x: number; y: number },
+  map: MapConfig,
+  zoom: number,
+): CameraViewport {
+  const base = computeViewport(viewportW, viewportH, focusPos, map);
+  const scale = base.scale * zoom;
+  const worldW = map.bounds.width * scale;
+  const worldH = map.bounds.height * scale;
+  let offsetX = viewportW / 2 - focusPos.x * scale;
+  let offsetY = viewportH / 2 - focusPos.y * scale;
+  const minOffsetX = viewportW - worldW - map.bounds.x * scale;
+  const minOffsetY = viewportH - worldH - map.bounds.y * scale;
+  const maxOffsetX = -map.bounds.x * scale;
+  const maxOffsetY = -map.bounds.y * scale;
+  offsetX = clamp(offsetX, Math.min(minOffsetX, maxOffsetX), Math.max(minOffsetX, maxOffsetX));
+  offsetY = clamp(offsetY, Math.min(minOffsetY, maxOffsetY), Math.max(minOffsetY, maxOffsetY));
+  return { scale, offsetX, offsetY, viewportW, viewportH };
+}
+
 export function worldToScreen(
   x: number,
   y: number,

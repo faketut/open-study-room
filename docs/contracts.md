@@ -1739,3 +1739,191 @@ Strings: no CJK in user-visible UI strings (grep `[\u4e00-\u9fff]`
 over `web/src/ui/**` + the two domain files, excluding comments).
 Tests: new behavior tests (collapsed default, mic warning visibility
 rules) + full suite green + `tsc -b` + production build.
+
+## Pixel-art tilemap + seating flow + focus cocoon (2026-09-30)
+
+Follow-up to the Layout revamp: the `library` template is re-authored as a
+compact pixel-art tilemap (Tilation 16×16), seating becomes click/tap-first,
+and sitting triggers a client-side "focus cocoon". Normative for the web
+client and for template authors. Only `library` adopts the tilemap in this
+change; the other four templates keep their current JSON.
+
+### 1. Tilemap asset (license)
+
+- Source: **Tilation "16x16 Small Indoor Tileset"**, CC BY-SA 4.0,
+  https://tilation.itch.io/16x16-small-indoor-tileset
+- File: `web/public/sprites/tilation-16x16.png` — a **byte-identical** copy
+  of the upstream PNG. It stays **CC BY-SA 4.0**; the repo itself is MIT.
+  The exception is recorded in three places: the PNG's sibling
+  `web/public/sprites/tilation-ATTRIBUTION.txt`, `CREDITS.md`, and the
+  README credits section. Do not re-encode, crop, or recolor the file.
+- The sheet is 128×432: 8 columns × 27 rows of 16×16 tiles. Tile index
+  `i` = row `r`, column `c` with `i = r*8+c`, `r` in [0,27), `c` in [0,8).
+  Named furniture aliases live in `web/src/ui/spriteAtlas.ts`
+  (`TILATION` catalog); the raw tile grid uses numeric indices.
+
+### 2. Tilemap template format
+
+A template opts into tilemap rendering with two fields:
+
+```json
+"tileVisual": true,
+"tilegrid": { "cols": 55, "rows": 40, "grid": [ /* 2200 ints, row-major */ ] }
+```
+
+- One tile = 16×16 world units. `cols*16` must equal `width` and
+  `rows*16` must equal `height` (validator: hard error otherwise), so the
+  grid maps 1:1 onto the map — no scaling, crisp pixels
+  (`imageSmoothingEnabled = false` everywhere on this layer).
+- Grid values: `-1` = transparent (nothing drawn); `0..215` = tile index
+  into the Tilation sheet. Anything else is a validator error.
+- Optional `deco` array (same dims): an overlay for furniture tiles that
+  carry transparency (chairs, plants) — drawn after `grid` so the floor
+  shows through. Same index rules, validated when present.
+- **Layer separation (normative).** The tile grid is the *visual* layer
+  only. Collision, sit targets, zones, and interaction stay in the
+  existing `objects` array with unchanged shapes — the validator (Q1–Q10)
+  and all gameplay logic are untouched. Positions of logical objects must
+  match the tiles drawn beneath them (authoring rule, verified by review
+  + the template's own tests).
+- `"tileVisual": true` tells the renderer: skip procedural drawing for
+  `wall | table | desk | chair | cabinet | plant | rug` (the tiles already
+  show them) but keep them for collision/logic. `zone | board | door |
+  note | portal` overlays still draw (zone tints, whiteboard, door
+  marker). Table highlight/occupancy rings still draw so sit targets read
+  in context.
+- Renderer prerenders the grid once per map into an offscreen canvas at
+  2× (1760×1280) and blits it per frame — 2200 `drawImage` calls per frame
+  is the thing we are avoiding. The 2× prerender keeps pixels crisp when
+  the focus cocoon zooms in.
+
+### 3. Library layout (final, replaces the 2026-09-30 §1 numbers)
+
+55×40 tiles, 880×640 world units. Four zones, compact RPG rooms:
+
+| Zone | Kind | Tile rect | World rect |
+|---|---|---|---|
+| Reading Hall (north) | silent | cols 1–53, rows 1–15 | x 16–864, y 16–256 |
+| Corridor | rest | cols 1–53, rows 17–18 | x 16–864, y 272–320 |
+| Lounge (southwest) | rest | cols 1–24, rows 20–38 | x 16–400, y 320–624 |
+| Lobby (southeast-center) | rest | cols 25–37, rows 20–38 | x 400–608, y 320–624 |
+| Discussion Corner (east) | discussion | cols 38–53, rows 20–38 | x 608–864, y 320–624 |
+
+Wall rows (0, 16, 19, 39) and the outer columns are folded into the
+adjacent zone rects so the Q4 dead-zone check passes at door gaps.
+
+- **Reading hall**: bookshelf divider at row 8 with a central passage
+  (cols 26–28, the old map's passage preserved). 5 tables / 32 chairs:
+  two 3×2 tables north of the divider, one 4×2 long table, two 3×2 south.
+- **Discussion corner**: whiteboard (`board` object, unchanged behavior —
+  `B` opens) on the east wall, one 2×2 table + 4 chairs, bookshelf run on
+  the north wall.
+- **Lounge**: fireplace, armchairs, 2× 2×2 tables + 8 chairs, plants,
+  daybeds.
+- **Lobby**: entrance door in the south wall (cols 30–31), 2 spawn points
+  at (440,560) and (560,560) (≥120 px apart, both walkable per Q5).
+- **Circulation**: every table cluster is reachable from the lobby without
+  crossing a table AABB; the discussion-corner whiteboard is reachable via
+  the corridor → lobby → discussion door gaps (the 2026-09-30 whiteboard
+  navigation lesson: no dead-end passages).
+- Final counts: **8 tables, 44 chairs**. (Validator Q10: 880×640/8 ≈
+  70k px²/table, no warning.)
+
+### 4. Click/tap-to-sit
+
+- Clicking (desktop) or tapping (touch) a **chair** resolves to its nearest
+  table and attempts the same sit path as `E` (`setSelfTable` +
+  `setTableAttribute`). Chair hit-test: point in chair AABB expanded by
+  6 px (touch slop). If already seated, clicks do nothing (stand via `E` /
+  the stand control, unchanged).
+- A chair belongs to its nearest table (pure function
+  `chairTableId(chair, tables)`); ties break by table id order. Chairs are
+  walkable-through (not in `SOLID_TYPES`) — unchanged.
+- `E`-key proximity sit and the touch `TouchActionBar` sit action are
+  unchanged and share the same `attemptSit(tableId)` entry point, so
+  full-house handling (§5) applies to all three.
+- Tap-to-move keeps precedence on empty floor: a tap is tested against
+  chairs first; only when no chair is hit does it become a move target.
+
+### 5. Full-house queue + overflow
+
+- **Seat model.** Table capacity = number of chairs assigned to it (§4).
+  Occupancy = presence-based: self + peers with that `tableId`
+  (client-side, from the existing presence broadcast). A table is *full*
+  when occupancy ≥ capacity.
+- **Trigger.** `attemptSit` on a full table — or on any reading-hall table
+  while every reading-hall table is full — opens the full-house dialog
+  instead of sitting.
+- **Dialog (English-only UI).** "Reading hall is full."
+  - `Queue for a seat` — joins the FIFO queue for the reading hall.
+  - `Sit in lounge instead` — closes the dialog, toasts
+    "Lounge seats are open — follow the highlight", and pulse-highlights
+    lounge tables with free seats for 6 s.
+  - `Cancel`.
+- **Queue semantics** (`web/src/domain/seatingQueue.ts`, pure +
+  unit-tested): per-client FIFO; position shown as "You are #N in line";
+  when any reading-hall seat frees (presence update) the head of the queue
+  gets a toast "A seat opened up in the reading hall!" and the freed table
+  pulse-highlights for 6 s; leaving the map or sitting anywhere dequeues;
+  5-minute timeout auto-dequeues with a toast.
+- **Honest limitation (v1).** Occupancy is presence-based with no server
+  arbitration: two clients can race for the last seat and both will
+  appear seated (last-writer-wins on the `table` attribute). The queue is
+  per-client, not global — with N queuers, all N get notified. This is
+  documented, not fixed, in v1.
+
+### 6. Focus cocoon (Option A: visual)
+
+- On sit (`self.tableId` set): the camera smoothly zooms toward ~1.7×
+  centered on the seated table and a radial vignette dims everything
+  outside ~140 px of the avatar. Pure client-side — other clients still
+  see the seated avatar on the un-zoomed map.
+- On stand: the camera animates back to 1× and the vignette fades.
+- Zoom is implemented as a multiplier on `computeViewport`
+  (`computeZoomedViewport`, pure + unit-tested); the render loop lerps the
+  live multiplier toward its target each frame (~0.6 s ease).
+- `prefers-reduced-motion`: no animation, no vignette (instant 1×).
+- Must not break: whiteboard (`B`), zone pill, PTT, mobile touch bar,
+  meeting suite — all DOM, all above the canvas.
+
+### Where it lives
+
+| Side | File | Symbol |
+|---|---|---|
+| Web | `web/public/sprites/tilation-16x16.png` (+ `tilation-ATTRIBUTION.txt`) | CC BY-SA 4.0 asset |
+| Web | `web/src/ui/spriteAtlas.ts` | `TILATION_SHEET`, `TILATION` named tiles |
+| Web | `web/src/types/mapConfig.ts` | `RawTileGrid`, `tilegrid`/`tileVisual` on raw + parsed config |
+| Web | `web/src/domain/mapConfig.ts` | `loadMapConfig` passes tilegrid through |
+| Web | `web/src/domain/mapTemplate.ts` | tilegrid validation (dims, index range) |
+| Web | `web/src/ui/SpatialCanvas.tsx` | tilemap prerender + blit layer; cocoon zoom + vignette |
+| Web | `web/src/domain/camera.ts` | `computeZoomedViewport` |
+| Web | `web/src/domain/seating.ts` (new) | `chairTableId`, `tableCapacity`, `tableOccupancy`, `attemptSit` target resolution |
+| Web | `web/src/domain/seatingQueue.ts` (new) | queue state machine (pure) |
+| Web | `web/src/ui/FullHouseDialog.tsx` (new) | queue / lounge-overflow / cancel |
+| Web | `web/src/ui/SyncleScreen.tsx` | canvas click/tap chair hit-test → `attemptSit`; queue toasts; dialog wiring |
+| Repo | `assets/templates/library.json` | tilegrid + re-authored objects per §3 |
+| Repo | `scripts/build-library-tilemap.mjs` (new) | authoring script that generates the tile grid + object list (reviewable source of truth) |
+
+### Test coverage
+
+- `web/src/domain/__tests__/mapTemplate.test.ts`: library.json validates
+  with zero errors (extended: tilegrid dims/index-range cases).
+- `web/src/domain/__tests__/seating.test.ts` (new): chair→table
+  assignment, capacity/occupancy, full-table detection, click hit-test
+  padding.
+- `web/src/domain/__tests__/seatingQueue.test.ts` (new): FIFO order,
+  notify-on-free, timeout, dequeue-on-sit/leave.
+- `web/src/domain/__tests__/camera.test.ts` (extended):
+  `computeZoomedViewport` centers on the focus point and clamps at edges.
+- Full web suite green + `tsc -b` + production build.
+
+### Self-consistency checklist
+
+Asset: PNG byte-identical + attribution file + CREDITS/README credit.
+Layout: 55×40 tilemap, 4 zones per §3 table, 8 tables / 44 chairs, lobby
+spawns, whiteboard reachable, central bookshelf passage. Seating: click /
+tap / E share `attemptSit`; full → dialog (queue / lounge / cancel).
+Cocoon: zoom + vignette on sit, restore on stand, reduced-motion safe.
+Tests: new seating/queue/camera suites + template validation green + all
+existing green. Out of scope: other four templates, `demo.mp4` re-record,
+server-side seat arbitration.

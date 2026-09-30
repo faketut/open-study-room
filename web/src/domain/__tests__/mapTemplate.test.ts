@@ -350,3 +350,84 @@ describe("validateTemplate: warnings (Q8-Q10)", () => {
     expect(warnings.join("\n")).toMatch(/overcrowded/);
   });
 });
+
+describe("validateTemplate: tilegrid (contracts.md Pixel-art tilemap §2)", () => {
+  it("accepts a well-formed tilegrid matching the map footprint", () => {
+    const t = validTemplate();
+    // 400x300 is not a multiple of 16 in height; use a 32x32 map instead.
+    t["width"] = 32; t["height"] = 32;
+    t["spawn_points"] = [{ x: 16, y: 16 }];
+    t["tileVisual"] = true;
+    t["tilegrid"] = { cols: 2, rows: 2, grid: [15, -1, 63, 111] };
+    const { errors } = validateTemplate(t);
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects a tilegrid whose dims do not match width/height", () => {
+    const t = validTemplate();
+    t["tileVisual"] = true;
+    t["tilegrid"] = { cols: 25, rows: 18, grid: new Array(25 * 18).fill(-1) };
+    // 25*16=400 ok, 18*16=288 ≠ 300
+    const { errors } = validateTemplate(t);
+    expect(errors.join("\n")).toMatch(/rows\*16/);
+  });
+
+  it("rejects grid length ≠ cols*rows and out-of-range indices", () => {
+    const t = validTemplate();
+    t["width"] = 32; t["height"] = 32;
+    t["tileVisual"] = true;
+    t["tilegrid"] = { cols: 2, rows: 2, grid: [0, 1, 2] };
+    expect(validateTemplate(t).errors.join("\n")).toMatch(/cols\*rows/);
+
+    const t2 = validTemplate();
+    t2["width"] = 32; t2["height"] = 32;
+    t2["tileVisual"] = true;
+    t2["tilegrid"] = { cols: 2, rows: 2, grid: [0, 216, -1, -2] };
+    expect(validateTemplate(t2).errors.join("\n")).toMatch(/grid\[1\]/);
+  });
+
+  it("rejects tileVisual:true without a valid tilegrid", () => {
+    const t = validTemplate();
+    t["tileVisual"] = true;
+    expect(validateTemplate(t).errors.join("\n")).toMatch(/tileVisual/);
+  });
+
+  it("validates the optional deco overlay when present", () => {
+    const t = validTemplate();
+    t["width"] = 32; t["height"] = 32;
+    t["spawn_points"] = [{ x: 16, y: 16 }];
+    t["tileVisual"] = true;
+    t["tilegrid"] = { cols: 2, rows: 2, grid: [15, -1, 63, 111], deco: [-1, 195, -1, -1] };
+    expect(validateTemplate(t).errors).toEqual([]);
+
+    const bad = validTemplate();
+    bad["width"] = 32; bad["height"] = 32;
+    bad["spawn_points"] = [{ x: 16, y: 16 }];
+    bad["tileVisual"] = true;
+    bad["tilegrid"] = { cols: 2, rows: 2, grid: [15, -1, 63, 111], deco: [-1, 999] };
+    expect(validateTemplate(bad).errors.join("\n")).toMatch(/deco/);
+  });
+
+  it("validates the real library.json tilemap with zero errors", async () => {
+    // @ts-expect-error node:fs has no type declarations here (@types/node absent)
+    const { readFileSync } = await import("node:fs");
+    // @ts-expect-error node:path has no type declarations here (@types/node absent)
+    const { resolve, dirname } = await import("node:path");
+    // @ts-expect-error node:url has no type declarations here (@types/node absent)
+    const { fileURLToPath } = await import("node:url");
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = JSON.parse(
+      readFileSync(resolve(here, "..", "..", "..", "..", "assets", "templates", "library.json"), "utf8"),
+    );
+    const { errors, warnings } = validateTemplate(raw);
+    expect(errors).toEqual([]);
+    // Sanity on the authoring: 8 tables / 44 chairs, 55×40 grid.
+    const objs = raw.objects as Array<{ type: string }>;
+    expect(objs.filter((o) => o.type === "table").length).toBe(8);
+    expect(objs.filter((o) => o.type === "chair").length).toBe(44);
+    expect(raw.tilegrid.cols).toBe(55);
+    expect(raw.tilegrid.rows).toBe(40);
+    expect(raw.tilegrid.grid.length).toBe(2200);
+    expect(warnings.join("\n")).not.toMatch(/overcrowded/);
+  });
+});
