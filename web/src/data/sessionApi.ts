@@ -59,9 +59,9 @@ export function getOrCreateDeviceId(): string {
 }
 
 // ---------- State report (M1 quiet semantics) ----------
-// Mirrors Android's RoomStateReporter: tells the server (x, y, table, zone)
-// so it can enforce the silent-zone media policy server-side and serve
-// late joiners from the snapshot. See docs/contracts.md "Zones".
+// Tells the server (x, y, table, zone) so it can enforce the silent-zone
+// media policy server-side and serve late joiners from the snapshot.
+// See docs/contracts.md "Zones".
 
 export interface StateReportBody {
   userId: string;

@@ -1,4 +1,0 @@
-<resources>
-    <string name="permission_rationale">Syncle 需要麦克风与相机权限以提供空间音视频协作功能</string>
-    <string name="permission_grant">授予权限</string>
-</resources>

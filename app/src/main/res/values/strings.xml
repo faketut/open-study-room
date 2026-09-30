@@ -1,5 +1,0 @@
-<resources>
-    <string name="app_name">Syncle</string>
-    <string name="permission_rationale">Syncle needs microphone and camera permissions for spatial audio-video collaboration.</string>
-    <string name="permission_grant">Grant permissions</string>
-</resources>

@@ -1,13 +1,18 @@
 # Syncle shared contracts
 
 Authoritative definitions for values that MUST be kept in sync between the
-**Android client**, the **Web client** (`web/`), and the **Node backend**
-(`server/`). If you change one side, change the others in the same PR.
+**Web client** (`web/`) and the **Node backend** (`server/`). If you change
+one side, change the other in the same PR.
+
+> **Changelog — 2026-09-29**: the Kotlin Android client (`app/`) was removed.
+> Syncle is now web + server only. Mobile goes through phone browsers
+> (touch-friendly web client); a Capacitor shell around the web client remains
+> an option if native push / background audio is ever needed. Android-only
+> contract entries below were rewritten or dropped accordingly.
 
 For the binary position packet (17-byte little-endian: `type=1 | x:f32 | y:f32 | seq:i64`),
-see [app/.../PositionSyncEngine.kt](../app/src/main/java/com/example/syncle/domain/PositionSyncEngine.kt)
-and [web/src/domain/positionPacket.ts](../web/src/domain/positionPacket.ts) — both
-implementations must stay byte-identical.
+see [web/src/domain/positionPacket.ts](../web/src/domain/positionPacket.ts) —
+the single implementation of the wire format.
 
 ## Room name
 
@@ -27,12 +32,12 @@ keeping them ASCII-safe avoids encoding bugs across the stack.
 | Side | File | Symbol |
 | --- | --- | --- |
 | Server | [server/src/routes/sessions.ts](../server/src/routes/sessions.ts) | `z.string().regex(/^[a-z0-9-]{3,64}$/, ...)` |
-| Client | [app/src/main/java/com/example/syncle/data/ProfileStore.kt](../app/src/main/java/com/example/syncle/data/ProfileStore.kt) | `ProfileStore.ROOM_REGEX` |
+| Web | [web/src/state/syncleStore.ts](../web/src/state/syncleStore.ts) | `ROOM_REGEX` |
 
 ### Test coverage
 
 - Server: [server/tests/routes.test.ts](../server/tests/routes.test.ts) — `it.each` covers `"ab"`, `"UPPER"`, `"bad room"`, `"bad/slash"`, 65-char input, plus the positive `team-alpha-42`.
-- Client: covered indirectly by `ProfileStore.isValidRoom` callers; the UI surfaces validation errors inline on the join screen.
+- Web: covered by `isValidRoom` unit tests; the UI surfaces validation errors inline on the join screen.
 
 ## Nickname
 
@@ -44,7 +49,7 @@ keeping them ASCII-safe avoids encoding bugs across the stack.
 
 | Side | File | Symbol |
 | --- | --- | --- |
-| Client | [app/src/main/java/com/example/syncle/data/ProfileStore.kt](../app/src/main/java/com/example/syncle/data/ProfileStore.kt) | `ProfileStore.NICKNAME_MAX_LEN`, `isValidNickname` |
+| Web | [web/src/state/syncleStore.ts](../web/src/state/syncleStore.ts) | `NICKNAME_MAX_LEN`, `isValidNickname` |
 | Server | not currently enforced — server accepts whatever the client sends |
 
 If the server adds nickname validation later, mirror these bounds.
@@ -58,7 +63,7 @@ If the server adds nickname validation later, mirror these bounds.
 
 | Side | File | Symbol |
 | --- | --- | --- |
-| Client | [app/src/main/java/com/example/syncle/data/ProfileStore.kt](../app/src/main/java/com/example/syncle/data/ProfileStore.kt) | `ProfileStore.PALETTE` |
+| Web | [web/src/state/syncleStore.ts](../web/src/state/syncleStore.ts) | `PALETTE` |
 | Server | passes the value through — no validation |
 
 ## /v1/sessions request
@@ -90,28 +95,26 @@ Response (200):
 
 Client behavior on token expiry: the reconnect loop refreshes the JWT when
 `expiresAt - now < 60_000` ms before the next LiveKit connect attempt
-(see `SyncleViewModel.scheduleReconnect`).
+(see `web/src/data/connectionController.ts`).
 
 ## LiveKit participant attributes
 
 Per-participant key/value strings published via
 `LocalParticipant.setAttributes(...)` and observed by remotes via
-`RoomEvent.ParticipantAttributesChanged`. Both clients MUST use the keys
-below verbatim; servers do not validate them.
+`RoomEvent.ParticipantAttributesChanged`. The web client MUST use the keys
+below verbatim; the server does not validate them.
 
 | Key | Type | Purpose | Empty-string meaning |
 | --- | --- | --- | --- |
 | `table_id` | string | Currently seated table id. Drives the sit-at-table meeting feature. | "explicitly stood up" (cleared) |
 | `nickname` | string | Display name. Falls back to LiveKit identity when missing. | "not published" — keep existing |
 | `color`    | string | `#RRGGBB` accent color for avatar. Falls back to a default. | "not published" — keep existing |
-| `character`| string | Android-only sprite character id. Web ignores. | "not published" — keep existing |
+| `character`| string | Sprite character id (pixel-art avatar). | "not published" — keep existing |
 
 ### Where it lives
 
 | Side | File | Symbol |
 | --- | --- | --- |
-| Android | [app/.../TablePresence.kt](../app/src/main/java/com/example/syncle/domain/TablePresence.kt) | `ATTR_TABLE_ID = "table_id"` |
-| Android | [app/.../SyncleViewModel.kt](../app/src/main/java/com/example/syncle/viewmodel/SyncleViewModel.kt) | `ATTR_COLOR`, `ATTR_NICKNAME`, `ATTR_CHARACTER` |
 | Web | [web/src/data/liveKitService.ts](../web/src/data/liveKitService.ts) | `setTableAttribute`, `publishProfileAttributes` |
 
 ### Required server grant
@@ -165,14 +168,14 @@ Transitions the client MUST implement:
 
 ### Distance attenuation (discussion / rest / none)
 
-Ported from Android `SpatialAudioEngine`; all three sides use identical
-constants. This **replaces** the old web binary gate
+Ported from the former Android `SpatialAudioEngine` (removed 2026-09-29);
+web and server use identical constants. This **replaces** the old web binary gate
 (`audible = sameTable ? 1 : 0`); table membership no longer decides
 audibility.
 
 | Constant | Value |
 | --- | --- |
-| `maxDistance` | `300` (map px, same unit as Android) |
+| `maxDistance` | `300` (map px) |
 | Volume | `v = clamp(1 - dist / maxDistance, 0, 1)` (linear) |
 | Beyond max | `v = 0` → not audible (client SHOULD unsubscribe / set volume 0) |
 
@@ -224,7 +227,7 @@ Clients MUST update `zone` / `zone_kind` when crossing a zone boundary
   in `silent` zones.
 - Screen share is allowed only in `discussion` zones.
 
-### Where it lives (to be filled as M1 lands)
+### Where it lives
 
 | Side | File | Symbol |
 | --- | --- | --- |
@@ -233,4 +236,3 @@ Clients MUST update `zone` / `zone_kind` when crossing a zone boundary
 | Web | `web/src/data/sessionApi.ts` | `reportState` (zone-bearing state reports: on boundary crossing + 30s heartbeat) |
 | Server | `server/src/routes/state.ts` | `zone` field ingestion |
 | Server | `server/src/livekit.ts` | server-side mute helper |
-| Android | `app/.../data/RoomStateReporter.kt` | `zone` field reporting |

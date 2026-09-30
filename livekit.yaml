@@ -1,4 +1,4 @@
-# LiveKit dev config for local browser+Android testing.
+# LiveKit dev config for local browser testing.
 #
 # Why: in --dev mode LiveKit auto-detects its external IP via STUN. On a
 # machine behind a corporate proxy (Zscaler/Netskope/etc.) that returns the
@@ -7,8 +7,7 @@
 # address, so WebRTC negotiation times out.
 #
 # Pinning node_ip=127.0.0.1 forces a single host-local candidate. The browser
-# (same host) and the Android emulator (via 10.0.2.2) both reach the
-# host-published UDP/7882 directly without STUN.
+# (same host) reaches the host-published UDP/7882 directly without STUN.
 port: 7880
 bind_addresses:
   - 0.0.0.0

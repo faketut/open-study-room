@@ -509,7 +509,7 @@ export const useSyncle = create<SyncleState>((set) => ({
     }),
 }));
 
-// Same room regex as ProfileStore.ROOM_REGEX (Android). See docs/contracts.md.
+// Contract values mirrored in docs/contracts.md.
 export const ROOM_REGEX = /^[a-z0-9-]{3,64}$/;
 export const NICKNAME_MAX_LEN = 32;
 export const PALETTE = [

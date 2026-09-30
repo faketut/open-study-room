@@ -2,7 +2,7 @@ services:
   livekit:
     # The /rtc/v1 path that livekit-client 2.5.x requires landed in a recent
     # server release. Both v1.7 and v1.8 return 404 here ("v1 RTC path not
-    # found"). Using `latest` keeps us in sync with the JS/Android SDKs.
+    # found"). Using `latest` keeps us in sync with the JS SDK.
     image: livekit/livekit-server:latest
     # `--config` overrides `--dev`'s auto STUN-discovered node IP, which
     # otherwise leaks the corporate proxy egress IP into ICE candidates and
@@ -34,7 +34,6 @@ services:
       # NOTE: this URL is echoed back to clients in /v1/sessions responses;
       # clients dial it directly, so it MUST be reachable from the client.
       #   - Browser on this host        → ws://localhost:7880  (default below)
-      #   - Android emulator on this host → ws://10.0.2.2:7880  (override env)
       #   - Physical phone on the LAN   → ws://<your-LAN-IP>:7880 (override env)
       # The backend itself never connects to LiveKit; it only signs JWTs, so
       # there's no harm in not pointing at the internal docker hostname.

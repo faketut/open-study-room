@@ -331,8 +331,7 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
 
   // M1: state-report heartbeat. Zone-crossing reports above are the
   // primary path, but a lost report (e.g. expired token at the crossing
-  // moment) would leave the server blind to our zone. 30s cadence mirrors
-  // Android's RoomStateReporter tick.
+  // moment) would leave the server blind to our zone. 30s cadence.
   useEffect(() => {
     const id = window.setInterval(() => {
       const s = useSyncle.getState().self;

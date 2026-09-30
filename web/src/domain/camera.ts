@@ -10,8 +10,7 @@ export interface CameraViewport {
 }
 
 // Computes a "cover" scale + camera offset that follows the local avatar while
-// clamping at map edges. Mirrors the behavior of ui/MapCamera.kt on Android,
-// kept intentionally simple (no spring smoothing yet).
+// clamping at map edges. Kept intentionally simple (no spring smoothing yet).
 export function computeViewport(
   viewportW: number,
   viewportH: number,

@@ -111,10 +111,9 @@ export async function setStatusAttribute(
 }
 
 /** Publish profile attributes once on join. `nickname`/`color` match the
- *  Android contract (`SyncleViewModel.ATTR_COLOR`/`ATTR_NICKNAME`).
- *  `character` is a web-only addition: a 1..50 sprite index string that
- *  peers parse to render the user's chosen avatar. Android peers ignore
- *  unknown attributes. */
+ *  contract (`docs/contracts.md` — LiveKit participant attributes).
+ *  `character` is a 1..50 sprite index string that peers parse to render
+ *  the user's chosen avatar. */
 export async function publishProfileAttributes(
   room: Room,
   profile: { nickname: string; color: string; characterIndex?: number },

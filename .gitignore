@@ -1,10 +1,6 @@
-build/
-.gradle/
+# IDE
 .idea/
 .vscode/
-
-# Local machine & secrets
-local.properties
 
 # OS cruft
 .DS_Store

@@ -1,6 +1,4 @@
 // Pure exponential back-off with jitter for LiveKit reconnect attempts.
-// Mirrors app/src/main/java/com/example/syncle/domain/ReconnectPolicy.kt so
-// web + Android behave the same when the signaling connection drops.
 //
 // attempt 1 -> ~1s
 // attempt 2 -> ~2s

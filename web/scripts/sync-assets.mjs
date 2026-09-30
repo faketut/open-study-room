@@ -1,7 +1,6 @@
-// Copies shared world assets from the Android app's asset folder into web/public/
+// Copies shared world assets from the repo-root `assets/` folder into web/public/
 // so Vite can serve them at `/map_config.json`, `/room1.jpg`, and `/sprites/*`.
-// Keeping a single source of truth (the Android assets dir) avoids drift between
-// the two clients.
+// Keeping a single source of truth (the top-level assets dir) avoids drift.
 import { cp, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -9,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const webDir = resolve(here, "..");
-const assetsDir = resolve(webDir, "..", "app", "src", "main", "assets");
+const assetsDir = resolve(webDir, "..", "assets");
 const publicDir = resolve(webDir, "public");
 const spritesSrc = resolve(assetsDir, "sprites");
 const spritesDst = resolve(publicDir, "sprites");
@@ -29,7 +28,7 @@ for (const name of topLevel) {
   console.log(`[sync-assets] ${name}`);
 }
 
-// Pixel-art sprite tree (mirrors `app/src/main/assets/sprites/` 1:1 so
+// Pixel-art sprite tree (mirrors `assets/sprites/` 1:1 so
 // `chars/char_07.png` resolves under `/sprites/chars/char_07.png`).
 if (!existsSync(spritesSrc)) {
   console.error(`[sync-assets] missing sprites dir: ${spritesSrc}`);

@@ -1,4 +1,4 @@
-// Wire-compatible mirror of app/src/main/java/com/example/syncle/domain/PositionSyncEngine.kt
+// 17-byte position packet shared with the server contract (docs/contracts.md).
 //
 // Packet layout (17 bytes, little-endian):
 //   byte 0      : type tag (1 = position)
@@ -6,8 +6,7 @@
 //   bytes 5..8  : y as float32
 //   bytes 9..16 : seq as int64
 //
-// Any change here MUST be mirrored in PositionSyncEngine.kt and reflected in
-// docs/contracts.md.
+// Any change here MUST be reflected in docs/contracts.md.
 
 export const PACKET_TYPE_POSITION = 1 as const;
 export const POSITION_PACKET_SIZE = 17 as const;

@@ -1,5 +1,5 @@
-// Mirrors app/src/main/assets/map_config.json shape exactly. Both clients
-// consume the same file (web copies it from app/src/main/assets/ at dev/build).
+// Mirrors assets/map_config.json shape exactly. The web client consumes
+// this file (copied into web/public/ at dev/build by scripts/sync-assets.mjs).
 //
 // Two authoring styles are supported (both go through the same MapConfig):
 //
