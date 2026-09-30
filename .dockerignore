@@ -1,0 +1,12 @@
+# Applies to builds whose context is the repo root (the `web` service).
+# The `server` service uses `server/` as its context, so this file does not
+# affect it.
+.git
+.github
+node_modules
+web/node_modules
+web/dist
+server/node_modules
+server/dist
+server/data
+*.log

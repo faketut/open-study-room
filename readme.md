@@ -51,15 +51,38 @@ changing them.
 
 ## Quick start
 
-```bash
-# 1. Backend + LiveKit (from repo root)
-docker compose up --build      # livekit :7880, server :8787
+One command brings up the full stack (from repo root):
 
-# 2. Web client
+```bash
+docker compose up --build -d   # web :8080 · server :8787 · livekit :7880
+# Open http://localhost:8080
+```
+
+Hacking on the client with hot reload instead:
+
+```bash
+docker compose up --build -d livekit server   # backend only
 cd web
 cp .env.example .env
 npm install
 npm run dev                    # http://localhost:5173
+```
+
+### Phone on the same Wi-Fi
+
+Two URLs must point at your host's LAN IP — `localhost` on the phone means
+the phone itself:
+
+| URL | Where it's set | Why |
+|-----|---------------|-----|
+| `VITE_BACKEND_URL` | **build arg** (baked into the web bundle by Vite at build time) | web client → backend REST |
+| `LIVEKIT_URL` | server env (echoed to clients in `/v1/sessions` responses) | phone → LiveKit WebRTC |
+
+```bash
+IP=192.168.1.42   # <- your host's LAN IP (ipconfig / ifconfig / ip addr)
+VITE_BACKEND_URL=http://$IP:8787 LIVEKIT_URL=ws://$IP:7880 \
+  docker compose up --build -d
+# Phone browser → http://192.168.1.42:8080
 ```
 
 World assets (`assets/map_config.json`, `room1.jpg`, `sprites/`) are copied

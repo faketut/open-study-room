@@ -55,3 +55,33 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
+
+  web:
+    build:
+      # Context is the REPO ROOT (not ./web): the web `prebuild` step syncs
+      # shared assets from ../assets and the moderation wordlist from
+      # ../server, so both must be visible at their repo-relative paths.
+      # See web/Dockerfile.
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        # NOTE: baked into the bundle at BUILD time (Vite inlines VITE_* vars
+        # into the JS). Default works when your browser runs on this host.
+        # Phone on the LAN? Rebuild with the host's LAN IP, e.g.:
+        #   VITE_BACKEND_URL=http://192.168.1.42:8787 docker compose up --build web
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8787}
+    # nginx only serves static files; it just needs the backend to be up so the
+    # client can reach it. `service_started` is enough.
+    depends_on:
+      server:
+        condition: service_started
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    healthcheck:
+      # nginx:alpine ships busybox wget; `/` proves the SPA is being served.
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s

@@ -14,7 +14,6 @@ import {
   AVATAR_RADIUS,
   LOCAL_CHAT_IDENTITY,
   MOVE_SPEED_PER_SEC,
-  POSITION_BROADCAST_HZ,
   useSyncle,
 } from "../state/syncleStore";
 import {
@@ -26,6 +25,7 @@ import {
   loadMapConfig,
 } from "../domain/mapConfig";
 import { encodePosition, nextSeq } from "../domain/positionPacket";
+import { hzForTier, nearestPeerDistance, tierForDistance } from "../domain/aoiPolicy";
 import {
   publishPosition,
   publishReliable,
@@ -733,10 +733,11 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
     return () => window.removeEventListener("blur", release);
   }, []);
 
-  // Game loop: move local avatar + 20Hz position broadcast.
+  // Game loop: move local avatar + AOI-tiered position broadcast (M4).
+  // The publish rate follows the nearest known peer's distance tier
+  // (NEAR 20 Hz / MID 5 Hz / FAR 1 Hz); stationary clients publish nothing.
   useEffect(() => {
     if (!map) return;
-    const publishIntervalMs = 1000 / POSITION_BROADCAST_HZ;
 
     const tick = (now: number) => {
       // MW1-4 battery tier: cap the game loop at ~30fps. lastTickRef is
@@ -860,6 +861,10 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
               void publishPosition(room, packet).catch((err) =>
                 console.warn("portal publish failed", err),
               );
+              // Teleport bypass: not tiered. Record the publish so the AOI
+              // loop below doesn't immediately re-send the same position.
+              lastPublishedRef.current = { x: spawn.x, y: spawn.y };
+              lastPublishRef.current = performance.now();
             })
             .catch((err) => {
               console.warn("portal load failed", err);
@@ -870,7 +875,22 @@ export function SyncleScreen({ room, cache, onLeave, onRetryReconnect }: SyncleS
         }
       }
 
-      // Broadcast at 20 Hz, but only when position changed since last publish.
+      // M4 AOI: publish rate follows the nearest known peer's distance
+      // tier (NEAR 20Hz / MID 5Hz / FAR 1Hz heartbeat), but only when the
+      // position changed since the last publish -- stationary clients stay
+      // at 0Hz, and resume immediately on the first changed tick because
+      // lastPublishRef is only advanced on an actual publish. AOI only
+      // changes the *rate*; zone policy (M1) and block filtering (M2) are
+      // untouched. Portal teleports publish immediately below (bypass).
+      const aoiState = useSyncle.getState();
+      const aoiSelf = aoiState.self;
+      const publishIntervalMs =
+        1000 /
+        hzForTier(
+          tierForDistance(
+            aoiSelf ? nearestPeerDistance(aoiSelf, [...aoiState.peers.values()]) : Infinity,
+          ),
+        );
       if (now - lastPublishRef.current >= publishIntervalMs) {
         const current = useSyncle.getState().self;
         if (current) {

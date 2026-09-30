@@ -129,6 +129,57 @@ to call `setAttributes`. Without it, LiveKit responds with
 `SignalRequestError: does not have permission to update own metadata`.
 See [server/src/livekit.ts](../server/src/livekit.ts).
 
+## Position broadcast AOI (M4)
+
+Wire format unchanged: 17-byte position packet (`type=1 | x:f32 | y:f32 | seq:i64`,
+see [web/src/domain/positionPacket.ts](../web/src/domain/positionPacket.ts)).
+
+Rationale: LiveKit data channels are room-broadcast — the SFU fans every
+publish out to all N−1 peers. There is no per-peer targeting, so the cost
+lever is **publish rate**, not selective delivery. AOI is therefore
+**sender-side tiering** by relevance. (Render-side culling of offscreen
+avatars is a separate client concern and changes no wire behavior.)
+
+### Tiers (by distance to nearest known peer)
+
+| Tier | Condition | Rate |
+| --- | --- | --- |
+| `NEAR` | nearest known peer < 1600 px | 20 Hz (`POSITION_BROADCAST_HZ`) |
+| `MID` | 1600–4000 px | 5 Hz |
+| `FAR` | > 4000 px, or no known peers | 1 Hz heartbeat |
+
+"Known peers" = positions from received data packets + `GET
+/v1/rooms/:room/snapshot`. The 1600 px NEAR radius covers the viewport
+(~1100 px half-diagonal at 1080p) + ~400 px margin.
+
+Constants (frozen): `AOI_NEAR_PX = 1600`, `AOI_MID_PX = 4000`,
+`AOI_NEAR_HZ = 20`, `AOI_MID_HZ = 5`, `AOI_FAR_HZ = 1`.
+
+### Idle suppression
+
+Stationary (position unchanged since last publish) → 0 Hz; resume immediately
+on the first changed tick. Pre-existing behavior, now contract.
+
+### Bypasses (publish immediately, ignore tier)
+
+- Portal teleport / spawn position (peers must not see the avatar slide).
+- Zone-boundary `zone` / `zone_kind` attribute updates (M1) ride attributes,
+  not the position hot path.
+
+### Orthogonality
+
+- M1 zone mute policy and M2 block filtering are unaffected: AOI changes only
+  the *rate* of position packets, never who may speak or who is filtered.
+- M2 local block stays receiver-side ignore (localStorage); AOI never reveals
+  or hides anyone.
+
+### Where it lives
+
+| Side | File | Symbol |
+| --- | --- | --- |
+| Web | [web/src/domain/aoiPolicy.ts](../web/src/domain/aoiPolicy.ts) | `tierForDistance`, `hzForTier`, `AOI_*` constants (pure, unit-tested) |
+| Web | [web/src/ui/SyncleScreen.tsx](../web/src/ui/SyncleScreen.tsx) | tiered publish loop (replaces fixed 20 Hz) |
+
 ## Zones (M1: quiet semantics)
 
 Open Study Room is a **virtual study room**: the default assumption is quiet, not
