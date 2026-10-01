@@ -81,9 +81,9 @@ VITE_BACKEND_URL=http://$IP:8787 LIVEKIT_URL=ws://$IP:7880 \
 # Phone browser → http://192.168.1.42:8080
 ```
 
-World assets (`assets/map_config.json`, `room1.jpg`, `sprites/`) are copied
-into `web/public/` by `npm run sync-assets` (runs automatically via
-`predev`/`prebuild`).
+World assets (`assets/sprites/`, `assets/backgrounds/`, `assets/templates/`)
+are copied into `web/public/` by `npm run sync-assets` (runs automatically
+via `predev`/`prebuild`).
 
 ## Demo
 

@@ -1,6 +1,9 @@
 // Copies shared world assets from the repo-root `assets/` folder into web/public/
-// so Vite can serve them at `/map_config.json`, `/room1.jpg`, and `/sprites/*`.
+// so Vite can serve them at `/sprites/*`, `/backgrounds/*`, and `/templates/*`.
 // Keeping a single source of truth (the top-level assets dir) avoids drift.
+// (The legacy room1 bitmap map — map_config.json + room1.jpg — was removed;
+// map JSONs now live under assets/templates/ and backgrounds under
+// assets/backgrounds/.)
 import { cp, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -15,20 +18,7 @@ const spritesDst = resolve(publicDir, "sprites");
 const templatesSrc = resolve(assetsDir, "templates");
 const templatesDst = resolve(publicDir, "templates");
 
-// Top-level public files (served at `/<name>`).
-const topLevel = ["map_config.json", "room1.jpg"];
-
 await mkdir(publicDir, { recursive: true });
-for (const name of topLevel) {
-  const src = resolve(assetsDir, name);
-  const dst = resolve(publicDir, name);
-  if (!existsSync(src)) {
-    console.error(`[sync-assets] missing source: ${src}`);
-    process.exit(1);
-  }
-  await cp(src, dst);
-  console.log(`[sync-assets] ${name}`);
-}
 
 // Pixel-art sprite tree (mirrors `assets/sprites/` 1:1 so
 // `chars/char_07.png` resolves under `/sprites/chars/char_07.png`).
@@ -53,7 +43,7 @@ if (!existsSync(backgroundsSrc)) {
 
 // P1-A map templates (contracts.md "Map templates"). Optional: template
 // authors create assets/templates/ later, so a missing dir is a skip, not
-// an error (unlike map_config.json / sprites above).
+// an error (unlike sprites above).
 if (!existsSync(templatesSrc)) {
   console.log(`[sync-assets] no templates dir, skipping`);
 } else {

@@ -1,9 +1,9 @@
-// Mirrors assets/map_config.json shape exactly. The web client consumes
-// this file (copied into web/public/ at dev/build by scripts/sync-assets.mjs).
+// Shape of the map JSON files (templates under assets/templates/, mirrored
+// into web/public/ at dev/build by scripts/sync-assets.mjs).
 //
 // Two authoring styles are supported (both go through the same MapConfig):
 //
-//   (A) Painted-background mode (legacy room1): provide background_image +
+//   (A) Painted-background mode: provide background_image +
 //       walkable_areas. Collision = avatar circle must fit inside one
 //       walkable rect. Renderer draws the bitmap and overlays table outlines.
 //

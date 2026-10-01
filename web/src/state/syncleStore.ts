@@ -126,7 +126,7 @@ export interface MapChoice {
 
 // Authored maps the user can pick on the join screen. Add to this list to
 // expose a new layout; each entry points at a JSON file under web/public/.
-// Procedural maps live under /maps/, the legacy room1 lives at the root.
+// Procedural maps live under /maps/.
 const STATIC_MAP_CHOICES: MapChoice[] = [
   {
     id: "procedural",
@@ -139,12 +139,6 @@ const STATIC_MAP_CHOICES: MapChoice[] = [
     label: "Lounge",
     url: "/maps/lounge.json",
     spawn: { x: 100, y: 250 },
-  },
-  {
-    id: "room1",
-    label: "Office Alpha (room1 bitmap)",
-    url: "/map_config.json",
-    spawn: { x: 150, y: 200 },
   },
 ];
 

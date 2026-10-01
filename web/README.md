@@ -8,8 +8,8 @@ desktop and phone appear as ordinary peers in the same spatial world.
 
 - Login → `POST /v1/sessions` → LiveKit JWT
 - Connect to LiveKit room; 20 Hz binary position broadcast over LiveKit data channel
-- Render the map (`room1.jpg` + `map_config.json` from the repo-root `assets/`
-  dir); WASD / arrows move, AABB walkable clamping
+- Render the map (map JSON from `assets/templates/`, painted background from
+  `assets/backgrounds/`); WASD / arrows move, AABB walkable clamping
 - Camera/microphone, table meetings (sit-to-join video grid), reconnect backoff, map editor
 - **M1 quiet semantics** (virtual study room): zones carry `kind: silent | discussion | rest`
   (see `docs/contracts.md` "Zones"); silent zones force-mute locally AND server-side
@@ -35,9 +35,9 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-The `predev` hook copies `map_config.json` and `room1.jpg` from the
-repo-root `assets/` dir into `public/`. Re-run `npm run sync-assets` after the
-world assets change.
+The `predev` hook copies world assets from the repo-root `assets/` dir into
+`public/` (`sprites/`, `backgrounds/`, `templates/`). Re-run
+`npm run sync-assets` after the world assets change.
 
 ## Layout
 

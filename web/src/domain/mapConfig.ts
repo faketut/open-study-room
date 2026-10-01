@@ -20,7 +20,7 @@ export const SOLID_TYPES: ReadonlySet<MapObjectType> = new Set<MapObjectType>([
   "cabinet",
 ]);
 
-export async function loadMapConfig(url = "/map_config.json"): Promise<MapConfig> {
+export async function loadMapConfig(url: string): Promise<MapConfig> {
   let raw: RawMapConfig;
   if (url === CUSTOM_MAP_URL) {
     const s = localStorage.getItem(CUSTOM_MAP_STORAGE_KEY);
